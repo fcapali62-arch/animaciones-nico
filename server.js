@@ -2378,6 +2378,12 @@ async function router(req, res) {
   const isGET = req.method === "GET";
   const isPOST = req.method === "POST";
   if (isGET && path === "/") return html(res, PAGE.replace("__CLIENT_CONFIG__", CLIENT_CONFIG.replace(/</g, "\\u003c")));
+  if (isGET && path === "/privacidad") {
+  return html(res, require("node:fs").readFileSync(__dirname + "/privacidad.html", "utf8"));
+}
+if (isGET && path === "/condiciones") {
+  return html(res, require("node:fs").readFileSync(__dirname + "/condiciones.html", "utf8"));
+}
   if (isGET && path === "/health") return json(res, 200, { ok: true, version: "6", appwriteConfigured: APP_READY });
   if (path === "/favicon.ico" || path === "/favicon.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" }); return res.end("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x1=\"0\" x2=\"1\" y1=\"0\" y2=\"1\"><stop stop-color=\"#ff5778\"/><stop offset=\"1\" stop-color=\"#ffad56\"/></linearGradient></defs><rect width=\"64\" height=\"64\" rx=\"16\" fill=\"url(#g)\"/><path d=\"M22 16v32\" fill=\"none\" stroke=\"#fff\" stroke-width=\"5\" stroke-linecap=\"round\"/><path d=\"M29 16.5Q29 13 32 15L50 29Q54 32 50 35L32 49Q29 51 29 47.5Z\" fill=\"#fff\"/></svg>"); }
   if (!path.startsWith("/api/") && !path.startsWith("/media/") && !path.startsWith("/private-media/")) abort(404, "Ruta no encontrada");
