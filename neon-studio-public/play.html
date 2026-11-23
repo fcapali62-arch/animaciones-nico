@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090d1c">
+  <title>NEON STUDIO — Juego 3D y creador de videos</title>
+  <style>
+    :root{color-scheme:dark;--bg:#090d1c;--panel:#141b30;--line:#2a3552;--txt:#f2f6ff;--muted:#aebbd7;--a:#4de7e0;--b:#8a6df7}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 25% -20%,#1a3155,#090d1c 60%);font:500 15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--txt)}
+    button,input,textarea,select{font:inherit}button{cursor:pointer}header{display:flex;align-items:center;gap:15px;justify-content:space-between;max-width:1260px;margin:auto;padding:18px 22px 10px;flex-wrap:wrap}
+    .brand{display:flex;gap:9px;align-items:center;font-size:20px;font-weight:900;letter-spacing:.5px}.brand span{color:var(--a)}.tag{font-size:11px;letter-spacing:2px;color:var(--muted);font-weight:800}
+    .tabs{display:flex;padding:5px;gap:4px;background:#151d33;border:1px solid var(--line);border-radius:16px}.tabs button{border:0;background:transparent;color:#b7c5dc;border-radius:11px;padding:10px 16px;font-weight:800}.tabs button.active{background:linear-gradient(110deg,#266c82,#52419a);color:white}
+    main{max-width:1260px;margin:auto;padding:12px 22px 35px}.intro{display:flex;align-items:end;justify-content:space-between;gap:10px;margin-bottom:15px;flex-wrap:wrap}.intro h1{font-size:clamp(25px,3vw,35px);margin:0 0 3px;line-height:1.15}.intro p{margin:0;color:var(--muted)}
+    .panel{background:rgba(20,27,48,.88);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 25px 75px #0004}.screen{position:relative;height:min(65vh,630px);min-height:400px;background:radial-gradient(circle at center,#192543,#030711);overflow:hidden}.screen canvas{display:block;width:100%;height:100%}
+    .hud{position:absolute;top:15px;left:15px;right:15px;display:flex;justify-content:space-between;gap:9px;align-items:center;pointer-events:none}.stats{background:#080d1fc9;border:1px solid #64729b66;padding:10px 13px;border-radius:13px;font-size:14px;font-weight:850;backdrop-filter:blur(6px)}.stats b{color:#60f4ec}.chip{font-size:12px;color:#bfcbe0;margin-left:5px}
+    .overlay{position:absolute;inset:0;background:linear-gradient(180deg,#060a17a8,#090b1cdd);display:flex;justify-content:center;align-items:center;padding:20px;text-align:center}.overlay-inner{max-width:410px}.overlay h2{font-size:clamp(27px,4vw,48px);line-height:1.05;margin:0 0 14px}.overlay h2 strong{color:var(--a)}.overlay p{color:#d0def1;margin:10px 0 20px}.primary{border:0;color:#07121c;background:linear-gradient(120deg,#57f7db,#77b7ff);font-weight:900;padding:12px 19px;border-radius:12px;box-shadow:0 4px 20px #36c7df35}.secondary{background:#1c2942;color:#eaf4ff;border:1px solid #475a7b;border-radius:12px;padding:11px 15px;font-weight:800}.secondary:hover,.primary:hover{filter:brightness(1.15)}.under{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 16px;flex-wrap:wrap}.under .small{color:var(--muted);font-size:13px}.under .actions{display:flex;gap:8px;flex-wrap:wrap}.hidden{display:none!important}
+    .touch{position:absolute;bottom:16px;left:16px;right:16px;justify-content:space-between;align-items:end;display:none;pointer-events:none}.touch button{pointer-events:auto;touch-action:none;background:#152848cb;color:#eaffff;border:1px solid #90a8c58c;font-weight:900;width:58px;height:52px;border-radius:15px;font-size:21px}.dpad{display:grid;grid-template-columns:repeat(3,58px);gap:5px}.dpad .up{grid-column:2;grid-row:1}.dpad .left{grid-column:1;grid-row:2}.dpad .down{grid-column:2;grid-row:2}.dpad .right{grid-column:3;grid-row:2}.touch .jump{width:78px;height:78px;border-radius:50%;background:#265c75db;font-size:15px}
+    .editor{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(285px,1fr);gap:16px}.preview{aspect-ratio:16/9;width:100%;background:#01030b;display:block;border-radius:13px}.editor-view{padding:15px}.editor-tools{padding:18px}.editor-tools h2{font-size:19px;margin:0 0 13px}.field{display:block;margin:0 0 15px;color:#c8d5ef;font-weight:700;font-size:13px}.field input[type=file],.field textarea,.field select{display:block;width:100%;margin-top:6px;border-radius:10px;background:#090f20;color:white;border:1px solid #425477;padding:11px}.field textarea{resize:vertical;min-height:72px}.field input[type=range]{display:block;width:100%;margin:13px 0 0;accent-color:#62e9e4}.hint{color:var(--muted);font-size:13px}.buttons{display:flex;gap:8px;flex-wrap:wrap}.pill{display:inline-block;padding:4px 9px;margin:7px 6px 0 0;border:1px solid #485a79;background:#15233d;border-radius:8px;color:#d5e7ff;font-size:12px}.footer{max-width:1260px;margin:auto;color:#8192b2;text-align:center;padding:0 22px 24px;font-size:12px}.status{color:#69f4d8;font-weight:800}.status.error{color:#ff9baf}
+    @media(max-width:850px){.editor{grid-template-columns:1fr}.screen{min-height:430px;height:65vh}.stats{padding:8px;font-size:12px}.hud{top:9px;left:8px;right:8px;gap:5px}.chip{display:none}}
+    @media(pointer:coarse){.touch{display:flex}.screen{min-height:510px}}
+    @media(max-width:480px){main{padding:9px 10px 20px}header{padding:14px 10px 5px}.tabs{width:100%}.tabs button{flex:1;padding:9px}.brand{font-size:18px}.under{padding:11px}.screen{min-height:520px}}
+  </style>
+</head>
+<body>
+  <header><div><div class="brand">⚡ NEON <span>STUDIO</span></div><div class="tag">CREA · JUEGA · GRABA</div></div>
+    <nav class="tabs" aria-label="Modos"><button id="tabGame" class="active">🎮 Juego 3D</button><button id="tabVideo">🎬 Crear videos</button></nav>
+  </header>
+  <main>
+    <section id="gameMode">
+      <div class="intro"><div><h1>NEON RUN <span style="color:var(--a)">3D</span></h1><p>Recoge 12 cristales, esquiva los drones y gana antes de que termine el tiempo.</p></div><div class="tag">VERSIÓN JUGABLE 1.0</div></div>
+      <div class="panel"><div class="screen" id="gameScreen">
+        <div class="hud"><div class="stats">💎 <b id="score">0/12</b> <span class="chip">CRISTALES</span></div><div class="stats">❤️ <b id="hp">3</b> <span class="chip">VIDAS</span></div><div class="stats">⏱️ <b id="time">75</b>s</div></div>
+        <div class="overlay" id="gameOverlay"><div class="overlay-inner"><div class="tag">AVENTURA EN 3D</div><h2 id="overlayTitle">¡ENTRA A <strong>NEON RUN!</strong></h2><p id="overlayText">Muévete con WASD o las flechas. Salta con ESPACIO. En celular, usa los controles táctiles.</p><button class="primary" id="startGame">▶ EMPEZAR A JUGAR</button></div></div>
+        <div class="touch"><div class="dpad"><button class="up" data-key="KeyW">▲</button><button class="left" data-key="KeyA">◀</button><button class="down" data-key="KeyS">▼</button><button class="right" data-key="KeyD">▶</button></div><button class="jump" data-key="Space">SALTAR</button></div>
+      </div><div class="under"><div class="small" id="gameStatus">💡 Consejo: mantén Shift para correr. También puedes grabar tu partida.</div><div class="actions"><button class="secondary" id="restartGame">↻ Reiniciar</button><button class="secondary" id="recordGame">⏺ Grabar partida</button></div></div></div>
+    </section>
+    <section id="videoMode" class="hidden">
+      <div class="intro"><div><h1>Tu estudio para <span style="color:var(--a)">crear videos</span></h1><p>Elige fotos, escribe un título, añade música y exporta el video desde tu navegador.</p></div><div class="tag">SIN CUENTA · SIN SERVIDOR</div></div>
+      <div class="editor">
+        <div class="panel editor-view"><canvas class="preview" id="videoCanvas" width="960" height="540" aria-label="Vista previa del video"></canvas><div class="under" style="padding:13px 0 2px"><div class="hint" id="videoStatus">La vista previa funciona incluso sin subir fotos.</div><div class="buttons"><button id="previewVideo" class="secondary">▶ Vista previa</button><button id="exportVideo" class="primary">⬇ Crear video</button></div></div><div class="hint" style="padding-top:8px">La exportación guarda un archivo <strong>.webm</strong> (video) compatible con navegadores modernos. La generación se realiza en tiempo real.</div></div>
+        <div class="panel editor-tools"><h2>🎞️ Personaliza tu video</h2>
+          <label class="field">1. Fotos para tu historia <input id="photos" type="file" accept="image/*" multiple><span class="hint">Puedes elegir varias fotos. Se mostrarán en orden.</span></label>
+          <div id="photoNames" style="margin-bottom:12px"></div>
+          <label class="field">2. Escribe el texto <textarea id="videoTitle" maxlength="150" placeholder="Mi aventura increíble">Mi aventura increíble ✨</textarea></label>
+          <label class="field">3. Segundos por foto: <b id="secondsLabel">3</b><input id="seconds" type="range" min="2" max="8" step="1" value="3"></label>
+          <label class="field">4. Color del texto <select id="textColor"><option value="#ffffff">Blanco</option><option value="#63f9ed">Turquesa</option><option value="#ffdd88">Dorado</option><option value="#ff92cf">Rosado</option></select></label>
+          <label class="field">5. Música de fondo (opcional) <input id="music" type="file" accept="audio/*"></label>
+          <p class="hint">Puedes crear un video animado con solo escribir un texto, o convertir tus fotografías en una presentación con movimiento y transiciones.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <div class="footer">Hecho para jugar y crear en tu navegador · El modo 3D requiere conexión para cargar la librería gráfica · No necesitas instalar aplicaciones.</div>
+  <script>
+    const $ = s => document.querySelector(s);
+    const gameMode=$('#gameMode'), videoMode=$('#videoMode');
+    $('#tabGame').onclick=()=>switchMode('game'); $('#tabVideo').onclick=()=>switchMode('video');
+    let mode='game';
+    function switchMode(m){mode=m;gameMode.classList.toggle('hidden',m!=='game');videoMode.classList.toggle('hidden',m!=='video');$('#tabGame').classList.toggle('active',m==='game');$('#tabVideo').classList.toggle('active',m==='video'); if(m==='video')renderVideoFrame(0);if(window.resizeGame)window.resizeGame();}
+    window.switchMode=switchMode;
+
+    // EDITOR DE VIDEOS — funciona sin la librería 3D.
+    const canvas=$('#videoCanvas'), ctx=canvas.getContext('2d');
+    let slides=[],previewing=false,recorder=null,exporting=false,audioURL='',gameRecorder=null;
+    const W=canvas.width,H=canvas.height, audio=new Audio();audio.loop=true;
+    function drawCover(img,zoom=1){const scale=Math.max(W/img.width,H/img.height)*zoom;const iw=img.width*scale,ih=img.height*scale;ctx.drawImage(img,(W-iw)/2,(H-ih)/2,iw,ih);}
+    function duration(){return Number($('#seconds').value)}
+    function totalDuration(){return Math.max(1,slides.length)*duration()}
+    function renderVideoFrame(t){
+      const grad=ctx.createLinearGradient(0,0,W,H);grad.addColorStop(0,'#332f89');grad.addColorStop(.52,'#136f87');grad.addColorStop(1,'#150e3c');ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+      const sec=duration(),count=Math.max(slides.length,1),i=Math.min(count-1,Math.floor(t/sec)),phase=(t%sec)/sec;
+      if(slides.length){
+        if(slides[i].img.complete){drawCover(slides[i].img,1.03+phase*.09)}
+        if(i<count-1&&phase>.78){ctx.save();ctx.globalAlpha=(phase-.78)/.22;drawCover(slides[i+1].img,1.03);ctx.restore()}
+      }else{
+        // Fondo animado original cuando no se han elegido fotografías.
+        for(let k=0;k<22;k++){const x=(k*149+(t*35)*(k%2?1:-1)+W*4)%W;const y=(k*83+130*Math.sin(t*.45+k))%H;ctx.beginPath();ctx.fillStyle=`rgba(150,245,255,${.12+(k%4)*.05})`;ctx.arc(x,y,2+k%5,0,Math.PI*2);ctx.fill()}
+        ctx.fillStyle='#0a254999';ctx.beginPath();ctx.moveTo(0,H);ctx.lineTo(0,380);ctx.lineTo(170,300);ctx.lineTo(335,420);ctx.lineTo(530,250);ctx.lineTo(770,410);ctx.lineTo(W,300);ctx.lineTo(W,H);ctx.fill();
+      }
+      ctx.fillStyle='#050a1f66';ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#6af5e2';ctx.font='bold 20px system-ui';ctx.textAlign='left';ctx.fillText('✦ NEON STUDIO',40,45);
+      const lines=wrapText($('#videoTitle').value.trim()||'Mi video increíble',760,ctx);
+      const center=H/2+48;ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='900 58px system-ui';ctx.shadowColor='#000b';ctx.shadowBlur=16;ctx.lineWidth=8;ctx.strokeStyle='#11182fb8';
+      lines.forEach((line,j)=>{const y=center+(j-(lines.length-1)/2)*70;ctx.strokeText(line,W/2,y);ctx.fillStyle=$('#textColor').value;ctx.fillText(line,W/2,y)});ctx.shadowBlur=0;
+      ctx.fillStyle='#ffffff55';ctx.fillRect(40,H-34,W-80,4);ctx.fillStyle='#68f9e9';ctx.fillRect(40,H-34,(W-80)*Math.min(1,t/totalDuration()),4);
+      ctx.textAlign='right';ctx.font='16px system-ui';ctx.fillStyle='#dde9fa';ctx.fillText(`${Math.floor(t)}s / ${totalDuration()}s`,W-40,H-44);
+    }
+    function wrapText(txt,maxWidth,context){context.font='900 58px system-ui';let words=txt.replace(/\n/g,' \n ').split(/\s+/),lines=[],line='';for(const word of words){if(word==='\n'){lines.push(line);line='';continue}if(context.measureText(line+' '+word).width>maxWidth&&line){lines.push(line);line=word}else line+=(line?' ':'')+word}if(line)lines.push(line);return lines.slice(0,5)}
+    const refresh=()=>{if(!previewing&&!exporting)renderVideoFrame(0)};
+    $('#videoTitle').oninput=refresh;$('#textColor').onchange=refresh;$('#seconds').oninput=()=>{$('#secondsLabel').textContent=duration();refresh()};
+    $('#photos').onchange=async e=>{
+      slides.forEach(s=>URL.revokeObjectURL(s.url));slides=[];
+      const files=[...e.target.files].filter(f=>f.type.startsWith('image/')).slice(0,24);
+      for(const file of files){const url=URL.createObjectURL(file);const img=new Image();img.src=url;try{await img.decode();slides.push({name:file.name,url,img})}catch(err){URL.revokeObjectURL(url)}}
+      $('#photoNames').replaceChildren(...slides.map((s,i)=>{let x=document.createElement('span');x.className='pill';x.textContent=`${i+1}. ${s.name.slice(0,19)}`;return x}));refresh();
+    };
+    $('#music').onchange=e=>{if(audioURL)URL.revokeObjectURL(audioURL);const file=e.target.files[0];audioURL=file?URL.createObjectURL(file):'';audio.src=audioURL;$('#videoStatus').textContent=file?'🎵 Música seleccionada: '+file.name:'Vista previa lista.'};
+    function playPreview(){if(exporting)return;previewing=!previewing;if(!previewing){audio.pause();$('#previewVideo').textContent='▶ Vista previa';refresh();return}$('#previewVideo').textContent='■ Detener';let start=performance.now();if(audioURL){audio.currentTime=0;audio.play().catch(()=>{})}const tick=now=>{if(!previewing)return;const t=(now-start)/1000;if(t>=totalDuration()){previewing=false;audio.pause();$('#previewVideo').textContent='▶ Vista previa';renderVideoFrame(totalDuration());return}renderVideoFrame(t);requestAnimationFrame(tick)};requestAnimationFrame(tick)}
+    $('#previewVideo').onclick=playPreview;
+    function downloadBlob(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000)}
+    function recorderMime(){return ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(x=>MediaRecorder.isTypeSupported(x))||''}
+    $('#exportVideo').onclick=async()=>{
+      if(exporting)return;
+      if(!canvas.captureStream||!window.MediaRecorder){$('#videoStatus').textContent='Tu navegador no permite exportar video. Prueba Chrome o Edge.';$('#videoStatus').classList.add('error');return}
+      if(previewing)playPreview();exporting=true;$('#exportVideo').disabled=true;$('#exportVideo').textContent='⏳ Creando...';$('#videoStatus').classList.remove('error');
+      let stream=canvas.captureStream(30),ac=null,musicSource=null,musicDestination=null;
+      try{
+        if(audioURL){ac=new(window.AudioContext||window.webkitAudioContext)();musicDestination=ac.createMediaStreamDestination();musicSource=ac.createMediaElementSource(audio);musicSource.connect(musicDestination);musicSource.connect(ac.destination);musicDestination.stream.getAudioTracks().forEach(track=>stream.addTrack(track));await ac.resume();audio.currentTime=0}
+        const mime=recorderMime();let pieces=[];let mr=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:4500000}:undefined);recorder=mr;
+        mr.ondataavailable=e=>{if(e.data.size)pieces.push(e.data)};
+        mr.onstop=()=>{const blob=new Blob(pieces,{type:mime||'video/webm'});downloadBlob(blob,'mi-video-neon-studio.webm');$('#videoStatus').textContent='✅ ¡Video creado y descargado!';$('#exportVideo').textContent='⬇ Crear video';$('#exportVideo').disabled=false;exporting=false;audio.pause();stream.getTracks().forEach(t=>t.stop());musicSource?.disconnect();ac?.close().catch(()=>{});renderVideoFrame(0)};
+        mr.onerror=()=>{$('#videoStatus').textContent='No se pudo grabar. Prueba Chrome o Edge.';$('#videoStatus').classList.add('error')};
+        renderVideoFrame(0);mr.start(100);if(audioURL)audio.play().catch(()=>{});
+        const begin=performance.now(),end=totalDuration();const tick=now=>{if(!exporting)return;const t=(now-begin)/1000;renderVideoFrame(Math.min(t,end));$('#videoStatus').textContent=`Creando video: ${Math.min(100,Math.round(100*t/end))}%`;if(t>=end){mr.state!=='inactive'&&mr.stop()}else requestAnimationFrame(tick)};requestAnimationFrame(tick)
+      }catch(e){console.error(e);exporting=false;$('#exportVideo').disabled=false;$('#exportVideo').textContent='⬇ Crear video';$('#videoStatus').textContent='No se pudo exportar: '+e.message;$('#videoStatus').classList.add('error');stream.getTracks().forEach(t=>t.stop());audio.pause();ac?.close().catch(()=>{})}
+    };
+    refresh();
+    // La lógica 3D se carga como módulo abajo.
+  </script>
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js';
+    const root=document.getElementById('gameScreen'),overlay=document.getElementById('gameOverlay');
+    const scene=new THREE.Scene();scene.background=new THREE.Color(0x080e21);scene.fog=new THREE.Fog(0x080e21,24,65);
+    const camera=new THREE.PerspectiveCamera(64,1,.1,110);camera.position.set(0,9,14);
+    const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.outputColorSpace=THREE.SRGBColorSpace;root.prepend(renderer.domElement);
+    scene.add(new THREE.HemisphereLight(0x88dffb,0x18102d,2.1));const sun=new THREE.DirectionalLight(0xffffff,2.5);sun.position.set(10,25,9);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-25;sun.shadow.camera.right=25;sun.shadow.camera.top=25;sun.shadow.camera.bottom=-25;scene.add(sun);
+    const mat=(color,emissive=0x000000,roughness=.46)=>new THREE.MeshStandardMaterial({color,emissive,emissiveIntensity:emissive?1.5:0,metalness:.22,roughness});
+    const ground=new THREE.Mesh(new THREE.PlaneGeometry(90,90),mat(0x101a32));ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+    const grid=new THREE.GridHelper(90,45,0x32b4d2,0x22324c);grid.position.y=.012;scene.add(grid);
+    const walls=[];
+    function box(x,y,z,w,h,d,color,glow=0){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(color,glow));mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;scene.add(mesh);return mesh}
+    for(let i=-1;i<=1;i+=2){box(i*19,.65,0,.55,1.3,38,0x284b78,0x072440);box(0,.65,i*19,38,1.3,.55,0x284b78,0x072440)}
+    [[-8,-7,2.5,2.6],[9,-9,3,3],[-11,8,3.8,2.5],[8,9,2.5,3.5],[0,-11,2.2,2],[0,11,3,2.8]].forEach(([x,z,w,d],i)=>{const h=1.5+(i%3)*.8;box(x,h/2,z,w,h,d,0x273656);box(x,h+.09,z,w+.18,.16,d+.18,i%2?0x6b45ff:0x35c9e8,i%2?0x4820e4:0x00a6ca);walls.push({x,z,w,d})});
+    for(let i=0;i<33;i++){let x=Math.sin(i*28.36)*24,z=Math.cos(i*39.7)*24;if(Math.abs(x)<18&&Math.abs(z)<18)continue;const b=box(x,.8,z,1.7,1.6,1.7,i%3?0x152d4e:0x1c365c);b.rotation.y=i*.6}
+    // Personaje neon.
+    const player=new THREE.Group(),body=new THREE.Mesh(new THREE.CylinderGeometry(.37,.46,1.1,10),mat(0x4debe2,0x0e797e)),head=new THREE.Mesh(new THREE.SphereGeometry(.36,16,12),mat(0xffdeb5));body.position.y=1;head.position.y=1.79;body.castShadow=head.castShadow=true;player.add(body,head);
+    for(const side of [-1,1]){const leg=new THREE.Mesh(new THREE.CapsuleGeometry(.13,.49,4,8),mat(0x31466d));leg.position.set(side*.22,.37,0);leg.castShadow=true;player.add(leg);const arm=new THREE.Mesh(new THREE.CapsuleGeometry(.11,.38,4,8),mat(0x36c3e0,0x075966));arm.position.set(side*.49,1.02,0);player.add(arm)}
+    const visor=box(0,0,0,.01,.01,.01,0);scene.remove(visor);visor.geometry.dispose();visor.material.dispose();
+    const face=new THREE.Mesh(new THREE.BoxGeometry(.5,.18,.10),new THREE.MeshBasicMaterial({color:0x151a3f}));face.position.set(0,1.82,.3);player.add(face);
+    scene.add(player);
+    const crystalGeo=new THREE.OctahedronGeometry(.54,0),crystalMat=mat(0x4affee,0x059aab),crystals=[];
+    const positions=[[0,5],[5,0],[-5,0],[5,5],[-5,-5],[11,2],[-12,-2],[12,13],[-13,13],[2,-15],[-16,-14],[16,-12],[2,13],[-8,14],[14,-5]];
+    positions.forEach(([x,z],i)=>{const mesh=new THREE.Mesh(crystalGeo,crystalMat.clone());mesh.position.set(x,1.25,z);mesh.castShadow=true;scene.add(mesh);crystals.push({mesh,used:false,phase:i*1.3})});
+    const drones=[];[[-7,2],[7,2],[1,-7],[-3,12]].forEach(([x,z],i)=>{const group=new THREE.Group(),orb=new THREE.Mesh(new THREE.IcosahedronGeometry(.64,1),mat(0xff5a96,0x7d144c));orb.castShadow=true;group.add(orb);const eye=new THREE.Mesh(new THREE.SphereGeometry(.20,10,8),new THREE.MeshBasicMaterial({color:0xffffff}));eye.position.set(0,0,.57);group.add(eye);group.position.set(x,1.4,z);scene.add(group);drones.push({group,x,z,phase:i*2.4})});
+    let playing=false,score=0,hp=3,time=75,last=performance.now(),vy=0,invincible=0;
+    const keys={};function reset(){score=0;hp=3;time=75;vy=0;invincible=0;player.position.set(0,0,0);crystals.forEach(c=>{c.used=false;c.mesh.visible=true});updateHUD()}
+    function updateHUD(){$('#score').textContent=score+'/12';$('#hp').textContent=hp;$('#time').textContent=Math.ceil(time)}
+    function gameEnd(win){playing=false;overlay.classList.remove('hidden');$('#overlayTitle').innerHTML=win?'¡<strong>GANASTE!</strong> 🏆':'¡<strong>FIN DE PARTIDA!</strong>';$('#overlayText').textContent=win?'Conseguiste los 12 cristales. ¿Quieres superar tu tiempo?':'Recoge cristales y esquiva a los drones. ¡Puedes volver a intentarlo!';$('#startGame').textContent='▶ JUGAR DE NUEVO'}
+    function start(){reset();playing=true;overlay.classList.add('hidden');$('#gameStatus').textContent='¡Adelante! 💎 Consigue los cristales evitando los drones.'}
+    $('#startGame').onclick=start;$('#restartGame').onclick=start;
+    window.addEventListener('keydown',e=>{if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)&&mode==='game')e.preventDefault();if(mode!=='game'||e.target.closest('input,textarea,select'))return;keys[e.code]=true;if(e.code==='KeyR')start()});window.addEventListener('keyup',e=>{keys[e.code]=false});window.addEventListener('blur',()=>{Object.keys(keys).forEach(k=>keys[k]=false)});
+    document.querySelectorAll('[data-key]').forEach(btn=>{const key=btn.dataset.key;btn.addEventListener('pointerdown',e=>{e.preventDefault();btn.setPointerCapture(e.pointerId);keys[key]=true});for(const ev of ['pointerup','pointercancel','lostpointercapture'])btn.addEventListener(ev,()=>{keys[key]=false})});
+    function resize(){const w=root.clientWidth,h=root.clientHeight;if(w<1||h<1)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h,false)}window.resizeGame=resize;window.addEventListener('resize',resize);resize();
+    function canMove(x,z){if(Math.abs(x)>18||Math.abs(z)>18)return false;return !walls.some(o=>Math.abs(x-o.x)<o.w/2+.38&&Math.abs(z-o.z)<o.d/2+.38)}
+    function frame(now){requestAnimationFrame(frame);const dt=Math.min((now-last)/1000,.045);last=now;const elapsed=now/1000;
+      crystals.forEach(c=>{if(!c.used){c.mesh.rotation.y+=dt*1.8;c.mesh.position.y=1.25+Math.sin(elapsed*3+c.phase)*.22}});
+      drones.forEach((d,i)=>{d.group.position.x=d.x+Math.sin(elapsed*.9+d.phase)*3;d.group.position.z=d.z+Math.cos(elapsed*.8+d.phase)*3;d.group.rotation.y+=dt*2;d.group.position.y=1.2+Math.sin(elapsed*3+i)*.27});
+      if(playing&&mode==='game'){
+        time-=dt;if(time<=0){time=0;gameEnd(false)}
+        const dx=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0),dz=(keys.KeyS||keys.ArrowDown?1:0)-(keys.KeyW||keys.ArrowUp?1:0),len=Math.hypot(dx,dz)||1;
+        const speed=(keys.ShiftLeft||keys.ShiftRight?10:6.4)*dt;const mx=dx/len*speed,mz=dz/len*speed;
+        if(canMove(player.position.x+mx,player.position.z))player.position.x+=mx;if(canMove(player.position.x,player.position.z+mz))player.position.z+=mz;
+        if(dx||dz)player.rotation.y=Math.atan2(dx,dz);
+        if((keys.Space)&&player.position.y<=.002){vy=9.5}
+        vy-=25*dt;player.position.y=Math.max(0,player.position.y+vy*dt);if(player.position.y===0)vy=0;
+        crystals.forEach(c=>{if(!c.used&&Math.hypot(c.mesh.position.x-player.position.x,c.mesh.position.z-player.position.z)<1.13){c.used=true;c.mesh.visible=false;score++;if(score>=12)gameEnd(true)}});
+        if(invincible>0)invincible-=dt;player.visible=!(invincible>0&&Math.floor(invincible*12)%2===0);
+        if(invincible<=0&&player.position.y<1.0){for(const d of drones){if(Math.hypot(d.group.position.x-player.position.x,d.group.position.z-player.position.z)<1.24){hp--;invincible=1.7;if(hp<=0)gameEnd(false);break}}}
+        updateHUD();
+      }else player.visible=true;
+      const target=new THREE.Vector3(player.position.x,player.position.y+7.2,player.position.z+12);camera.position.lerp(target,.08);camera.lookAt(player.position.x,1.0,player.position.z);
+      renderer.render(scene,camera);
+    }requestAnimationFrame(frame);
+    $('#recordGame').onclick=()=>{if(gameRecorder&&gameRecorder.state==='recording'){gameRecorder.stop();$('#recordGame').textContent='⏺ Grabar partida';return}if(!renderer.domElement.captureStream||!window.MediaRecorder){$('#gameStatus').textContent='Este navegador no permite grabar. Prueba Chrome o Edge.';return}const stream=renderer.domElement.captureStream(30),mime=['video/webm;codecs=vp8','video/webm'].find(x=>MediaRecorder.isTypeSupported(x));let chunks=[];try{gameRecorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);gameRecorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};gameRecorder.onstop=()=>{downloadBlob(new Blob(chunks,{type:'video/webm'}),'mi-partida-neon-run.webm');stream.getTracks().forEach(t=>t.stop());$('#gameStatus').textContent='✅ ¡Partida grabada y descargada!'};gameRecorder.start(100);$('#recordGame').textContent='⏹ Detener grabación';$('#gameStatus').textContent='🔴 Grabando partida... pulsa «Detener grabación» para guardar.'}catch(e){$('#gameStatus').textContent='No se pudo iniciar la grabación: '+e.message}};
+  </script>
+</body>
+</html>
