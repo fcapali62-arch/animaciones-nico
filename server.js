@@ -144,7 +144,18 @@ async function getRow(table, id) {
   catch (err) { if (err.status === 400) abort(404, "Elemento no encontrado"); throw err; }
 }
 async function addRow(table, data, rowId = crypto.randomUUID()) {
-  return appJSON(rowsPath(table), "POST", { rowId, data, permissions: [] });
+  try {
+    return await appJSON(rowsPath(table), "POST", { rowId, data, permissions: [] });
+  } catch (error) {
+    // Algunas tablas antiguas de Appwrite también exigen 'nombra'.
+    // Reintenta únicamente cuando Appwrite confirma ese campo obligatorio.
+    if (data.nombre && /Missing required attribute [\"']nombra[\"']/i.test(error.message || "")) {
+      return appJSON(rowsPath(table), "POST", {
+        rowId, data: { ...data, nombra: data.nombre }, permissions: []
+      });
+    }
+    throw error;
+  }
 }
 async function updateRow(table, id, data) {
   return appJSON(rowsPath(table, id), "PATCH", { data });
