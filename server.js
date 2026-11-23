@@ -144,18 +144,7 @@ async function getRow(table, id) {
   catch (err) { if (err.status === 400) abort(404, "Elemento no encontrado"); throw err; }
 }
 async function addRow(table, data, rowId = crypto.randomUUID()) {
-  try {
-    return await appJSON(rowsPath(table), "POST", { rowId, data, permissions: [] });
-  } catch (error) {
-    // Algunas tablas antiguas de Appwrite también exigen 'nombra'.
-    // Reintenta únicamente cuando Appwrite confirma ese campo obligatorio.
-    if (data.nombre && /Missing required attribute [\"']nombra[\"']/i.test(error.message || "")) {
-      return appJSON(rowsPath(table), "POST", {
-        rowId, data: { ...data, nombra: data.nombre }, permissions: []
-      });
-    }
-    throw error;
-  }
+  return appJSON(rowsPath(table), "POST", { rowId, data, permissions: [] });
 }
 async function updateRow(table, id, data) {
   return appJSON(rowsPath(table, id), "PATCH", { data });
@@ -204,7 +193,7 @@ function publicPost(row) {
   const f = fileReference(row);
   return {
     id: row.$id,
-    nombre: row.nombre || "Creador",
+    nombre: row.nombra || row.nombre || "Creador",
     titulo: row.titulo || "Sin título",
     descripcion: row.descripcion || "",
     estado: row.estado || "pendiente",
@@ -2473,7 +2462,7 @@ if (isGET && path === "/condiciones") {
       const kind = file.type.startsWith("image/") ? "image" : "video";
       fileId = await sendFile(Buffer.from(await file.arrayBuffer()),file.type);
       const post = await addRow(TABLE_POSTS, {
-        titulo,descripcion,nombre:user?.nombre||"Visitante",usuario_id:user?.id||"",
+        titulo,descripcion,nombra:user?.nombre||"Visitante",usuario_id:user?.id||"",
         video_url:`${kind}:${fileId}`,estado:"pendiente",
       });
       postId=post.$id;
