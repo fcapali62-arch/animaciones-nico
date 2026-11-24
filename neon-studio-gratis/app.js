@@ -1,160 +1,62 @@
 'use strict';
 (()=>{
-  const $ = (s) => document.querySelector(s);
-  const $$ = (s) => [...document.querySelectorAll(s)];
-  const state={user:null,me:null,page:'create',mode:'video',authMode:'register',currentJob:null,jobTimer:null,busy:false,adminData:null};
-  const tabs={create:'Crear con IA',library:'Mis creaciones',ideas:'Explorar ideas',admin:'Administración'};
-  const examples={
-    elephant:{style:'cinematic',prompt:'Un elefante gigantesco y majestuoso vuela entre las nubes usando sus enormes orejas como alas. Al fondo se levantan montañas flotantes y un sol naranja sobre el horizonte. La cámara asciende lentamente alrededor del elefante, mostrando su vuelo con gran realismo cinematográfico; viento, luz dorada y nubes volumétricas.'},
-    dino:{style:'realistic',prompt:'Un explorador corre desesperadamente por una selva tropical bajo una intensa lluvia, mientras un enorme tiranosaurio lo persigue entre árboles y lianas. Plano cinematográfico con cámara en movimiento, reflejos realistas en el suelo y un ambiente de aventura espectacular.'},
-    anime:{style:'anime',prompt:'Una joven aventurera con abrigo rojo salta entre los tejados de una ciudad japonesa futurista al atardecer. Las luces de neón se reflejan en la lluvia, el cabello se mueve con el viento, y una cámara fluida sigue su recorrido en un estilo de anime de alta calidad.'}
-  };
-  let toastTimer=0;
-  function status(text,kind=''){
-    const node=$('#generateStatus');node.textContent=text;node.className='notice '+kind;
-  }
-  function htmlEscape(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-  function when(x){if(!x)return '—';try{return new Date(x).toLocaleString('es-PE',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}catch{return '—';}}
-  async function api(path,body=undefined){
-    const r=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
-    let v;try{v=await r.json()}catch{throw Error('No se obtuvo una respuesta válida del servidor.');}
-    if(!r.ok)throw Error(v.error||'No fue posible completar esta operación.');return v;
-  }
-  function switchPage(page){
-    if(!Object.hasOwn(tabs,page))page='create';state.page=page;
-    $$('.page').forEach(x=>x.classList.toggle('hidden',x.id!=='page-'+page));
-    $$('[data-nav]').forEach(x=>x.classList.toggle('selected',x.dataset.nav===page));
-    $('#crumb').textContent=tabs[page];$('#sidebar').classList.remove('open');
-    if(page==='library')loadLibrary(); if(page==='admin')loadAdmin();
-    window.scrollTo({top:0,behavior:'instant'});
-  }
-  $$('[data-nav]').forEach(x=>x.addEventListener('click',()=>switchPage(x.dataset.nav)));
-  $('#toggleMenu').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
-  $('#seeLibrary').addEventListener('click',()=>switchPage('library'));
-  function switchMode(mode){
-    state.mode=mode;$$('[data-mode]').forEach(x=>{const on=x.dataset.mode===mode;x.classList.toggle('current',on);x.setAttribute('aria-selected',on?'true':'false');});
-    $('#videoOptions').classList.toggle('hidden',mode==='image');
-    $('#engineDetail').textContent=mode==='video'?'Motor de video: Seedance 2.5, mediante API autorizada':'Motor de imagen: Nano Banana de Google, mediante API autorizada';
-    $('#generateLabel').textContent=mode==='video'?'Crear video con IA':'Crear imagen con IA';
-    $('#previewLabel').textContent=mode==='video'?'Aquí aparecerá el video real cuando el motor de IA termine.':'Aquí aparecerá la imagen real cuando el motor de IA termine.';
-    $('#resultIllustration').src=mode==='video'?'/assets/cinema.svg':'/assets/fantasy.svg';
-    status('El resultado se obtendrá de un modelo real. Las ilustraciones son solo referencias.');
-  }
-  $$('[data-mode]').forEach(x=>x.addEventListener('click',()=>switchMode(x.dataset.mode)));
-  $('#duration').addEventListener('input',()=>{$('#durationLabel').textContent=$('#duration').value+' segundos'});
-  $('#prompt').addEventListener('input',()=>{$('#charCount').textContent=$('#prompt').value.length+' / 1700'});
-  function useExample(key){const x=examples[key];if(!x)return;$('#prompt').value=x.prompt;$('#style').value=x.style;$('#charCount').textContent=x.prompt.length+' / 1700';switchPage('create');$('#prompt').focus();status('Idea de ejemplo cargada. El resultado aún no ha sido generado.');}
-  $('#examplePrompt').addEventListener('click',()=>useExample('elephant'));
-  $$('[data-example]').forEach(x=>x.addEventListener('click',()=>useExample(x.dataset.example)));
-  function updateIdentity(){
-    const u=state.user;const initials=u?.email?.slice(0,1).toUpperCase()||'N';
-    $('#profileInitial').textContent=initials;$('#profileName').textContent=u?.email?.split('@')[0]||'Invitado';
-    $('#profileSub').textContent=u?.role==='admin'?'Administrador':u?'Cuenta gratuita':'Iniciar sesión';
-    $('#topAccount').textContent=initials;$('#adminTiny').textContent=u?.role==='admin'?'Activo':'Privado';
-    const on=!!(state.me?.imageReady||state.me?.videoReady);$('#serverStatus').classList.toggle('ready',on);
-    $('#serverText').textContent=on?'Motor IA disponible':'Motor IA por conectar';
-    $('#adminGateNote').textContent=u?.role==='admin'?'Acceso habilitado':u?'Tu cuenta no tiene permisos de administración.':'Para entrar se requiere la cuenta del propietario.';
-  }
-  async function refreshSession(){try{state.me=await api('/api/me');state.user=state.me.user;updateIdentity();return true}catch(e){status('No se pudo consultar el servidor: '+e.message,'error');return false;}}
-  function openAuth(mode){state.authMode=mode||(state.user?'login':'register');const signed=!!state.user;
-    $('#authOverlay').classList.remove('hidden');$('#authForm').classList.toggle('hidden',signed);$('#logout').classList.toggle('hidden',!signed);
-    $('#authTitle').textContent=signed?'Tu cuenta':state.authMode==='register'?'Crea tu cuenta gratuita':'Iniciar sesión';
-    $('#authSubtitle').textContent=signed?(state.user.email+' · acceso gratuito'):state.authMode==='register'?'Registro de prueba. Usa una contraseña exclusiva para NEON STUDIO. No debes pagar.':'Accede a tus creaciones o a tu administración.';
-    $('#authButton').textContent=state.authMode==='register'?'Crear cuenta gratis':'Iniciar sesión';
-    $('#switchAuth').classList.toggle('hidden',signed);$('#switchAuth').textContent=state.authMode==='register'?'¿Ya tienes una cuenta? Inicia sesión':'¿No tienes cuenta? Regístrate gratis';
-    $('#authPassword').autocomplete=state.authMode==='register'?'new-password':'current-password';
-    $('#authStatus').textContent='';
-  }
-  ['sidebarAccount','topAccount','mobileAccount','adminLogin'].forEach(id=>$('#'+id)?.addEventListener('click',()=>openAuth(id==='adminLogin'?'login':undefined)));
-  $('#closeAuth').addEventListener('click',()=>$('#authOverlay').classList.add('hidden'));
-  $('#authOverlay').addEventListener('click',e=>{if(e.target.id==='authOverlay')$('#authOverlay').classList.add('hidden')});
-  $('#switchAuth').addEventListener('click',()=>openAuth(state.authMode==='register'?'login':'register'));
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('#authOverlay').classList.add('hidden');$('#sidebar').classList.remove('open');}});
-  $('#authForm').addEventListener('submit',async e=>{e.preventDefault();const btn=$('#authButton');btn.disabled=true;$('#authStatus').textContent='Procesando...';
-    try{const result=await api(state.authMode==='register'?'/api/register':'/api/login',{email:$('#authEmail').value.trim(),password:$('#authPassword').value});
-      state.user=result.user;await refreshSession();$('#authOverlay').classList.add('hidden');$('#authPassword').value='';
-      status('Sesión iniciada. No se requiere pago.','success');if(state.page==='admin')loadAdmin();
-    }catch(err){$('#authStatus').textContent=err.message;$('#authStatus').className='notice error';}finally{btn.disabled=false;}
-  });
-  $('#logout').addEventListener('click',async()=>{try{await api('/api/logout',{})}catch{}$('#authOverlay').classList.add('hidden');state.user=null;await refreshSession();switchPage('create');status('Sesión cerrada.');});
-  $('#serverStatus').addEventListener('click',async()=>{try{const s=await api('/api/status');status(s.configured?'El motor de IA está disponible según la configuración del servidor.':'Versión de prueba: falta configurar una clave API, presupuesto y almacenamiento permanente. Ninguna solicitud consumirá créditos.',''+(s.configured?'success':'waiting'));}catch(e){status(e.message,'error');}switchPage('create');});
-  const terminal=new Set(['completed','failed','canceled','nsfw']);
-  function stopPolling(){if(state.jobTimer){clearTimeout(state.jobTimer);state.jobTimer=null;}}
-  function clearResult(){
-    $('#resultVideo').pause();$('#resultVideo').removeAttribute('src');$('#resultVideo').load();
-    $('#resultVideo').classList.add('hidden');$('#resultImage').removeAttribute('src');$('#resultImage').classList.add('hidden');
-    $('#download').classList.add('hidden');$('#resultIllustration').classList.remove('hidden');$('#resultEmpty').classList.remove('hidden');
-  }
-  function showResult(item){
-    if(!item)return;state.currentJob=item;
-    const labels={completed:'Terminado',queued:'En cola',submitting:'Enviando',in_progress:'Generando',failed:'Error',canceled:'Cancelado',nsfw:'No disponible'};
-    $('#resultBadge').textContent=labels[item.status]||'Pendiente';
-    clearResult();
-    if(item.status==='completed' && item.url){
-      if(item.type==='image'){$('#resultImage').src=item.url;$('#resultImage').classList.remove('hidden');}
-      else if(/^https:\/\//.test(item.url)){$('#resultVideo').src=item.url;$('#resultVideo').classList.remove('hidden');}
-      $('#resultIllustration').classList.add('hidden');$('#resultEmpty').classList.add('hidden');
-      $('#download').href=item.url;$('#download').download=item.type==='image'?'imagen-neon-studio.png':'video-neon-studio.mp4';$('#download').classList.remove('hidden');
-      $('#resultDescription').textContent=(item.type==='video'?'Video':'Imagen')+' recibido del modelo de inteligencia artificial. '+(item.duration?item.duration+' segundos solicitados.':'');
-      status('Tu creación está lista. Puedes reproducirla o descargarla.','success');
-    }else if(['queued','submitting','in_progress'].includes(item.status)){
-      $('#resultDescription').textContent='El motor externo está procesando tu solicitud. Esta imagen es solo una referencia visual.';
-      status('Tu video está en proceso. El estudio consultará automáticamente el resultado.','waiting');
-    }else{
-      $('#resultDescription').textContent='No se obtuvo un video. Esta ilustración no representa una generación.';
-      status(item.error||'La solicitud no se completó.','error');
-    }
-  }
-  async function poll(){stopPolling();const item=state.currentJob;if(!item||item.type!=='video'||terminal.has(item.status))return;
-    try{const data=await api('/api/video/status/'+encodeURIComponent(item.id));showResult(data.item);if(!terminal.has(data.item.status))state.jobTimer=setTimeout(poll,6500);else loadLibrary();}
-    catch(err){status('La generación puede seguir en proceso; no se pudo consultar su estado: '+err.message,'error');state.jobTimer=setTimeout(poll,14000);}
-  }
-  $('#generate').addEventListener('click',async()=>{
-    if(state.busy)return;
-    const prompt=$('#prompt').value.trim(),style=$('#style').value,aspect=$('#aspect').value,duration=Number($('#duration').value);
-    if(prompt.length<10){status('Describe tu escena con al menos 10 caracteres.','error');$('#prompt').focus();return;}
-    if(!state.user){openAuth('register');status('Crea una cuenta gratuita para guardar tus resultados.','waiting');return;}
-    if(!state.user.active){status('Esta cuenta no tiene acceso. Solicita revisión al administrador.','error');return;}
-    const ready=state.mode==='video'?state.me?.videoReady:state.me?.imageReady;
-    if(!ready){status('Motor '+(state.mode==='video'?'de videos Seedance':'de imágenes Nano Banana')+' pendiente de activación. Esta versión de prueba no enviará peticiones falsas.','error');return;}
-    state.busy=true;const btn=$('#generate');btn.disabled=true;$('#generateLabel').textContent='Enviando solicitud...';
-    try{const endpoint=state.mode==='video'?'/api/video/generate':'/api/image/generate';
-      const data=await api(endpoint,{prompt,style,aspect,duration,sound:$('#sound').checked});
-      showResult(data.item);if(data.item.type==='video'&&!terminal.has(data.item.status))state.jobTimer=setTimeout(poll,3000);
-    }catch(err){status(err.message,'error');}finally{state.busy=false;btn.disabled=false;$('#generateLabel').textContent=state.mode==='video'?'Crear video con IA':'Crear imagen con IA';}
-  });
-  function card(item){const node=document.createElement('article');node.className='library-card';
-    if(item.type==='image'&&item.status==='completed'&&item.url){const im=document.createElement('img');im.src=item.url;im.alt='Imagen real generada';node.append(im);}
-    else {const im=document.createElement('img');im.src=item.type==='video'?'/assets/cinema.svg':'/assets/fantasy.svg';im.alt='Imagen de referencia, no generación real';node.append(im);}
-    const title=document.createElement('strong');title.textContent=(item.type==='video'?'Video · ':'Imagen · ')+(item.style||'');node.append(title);
-    const details=document.createElement('small');details.textContent=(item.duration?item.duration+' segundos · ':'')+when(item.createdAt)+' · '+item.status;node.append(details);
-    const btn=document.createElement('button');btn.className='outline-action';btn.type='button';btn.textContent=item.status==='completed'?'Ver resultado':'Consultar estado';btn.onclick=()=>{switchMode(item.type);switchPage('create');showResult(item);if(item.type==='video'&&!terminal.has(item.status))poll();};node.append(btn);return node;
-  }
-  async function loadLibrary(){const el=$('#libraryList');el.innerHTML='';
-    if(!state.user){el.innerHTML='<div class="empty-card">Inicia sesión para consultar tus creaciones.</div>';return;}
-    el.innerHTML='<div class="empty-card">Consultando historial...</div>';
-    try{const data=await api('/api/library');el.innerHTML='';if(!data.items.length){el.innerHTML='<div class="empty-card">Todavía no hay resultados. Cuando conectemos los motores, tus creaciones aparecerán aquí.</div>';return;}
-      data.items.forEach(x=>el.append(card(x)));
-    }catch(e){el.textContent=e.message;}
-  }
-  $('#refreshLibrary').addEventListener('click',loadLibrary);
-  function tech(title,value){const c=document.createElement('div');c.className='tech';const a=document.createElement('strong');a.textContent=title;const b=document.createElement('span');b.textContent=value;c.append(a,b);return c;}
-  function renderAdminUsers(){const tbody=$('#adminUsers');tbody.innerHTML='';const all=state.adminData?.users||[];const q=$('#userSearch').value.trim().toLowerCase();const users=all.filter(x=>x.email.toLowerCase().includes(q));
-    if(!users.length){const tr=document.createElement('tr');const td=document.createElement('td');td.colSpan=4;td.textContent='No se encontraron usuarios.';tr.append(td);tbody.append(tr);return;}
-    for(const u of users){const tr=document.createElement('tr');
-      for (const t of [u.email,u.role==='admin'?'Administrador':'Gratis',u.blocked?'Suspendido':'Activo']){const td=document.createElement('td');td.textContent=t;tr.append(td);}
-      const action=document.createElement('td');if(u.role!=='admin'){const btn=document.createElement('button');btn.className='outline-action';btn.textContent=u.blocked?'Rehabilitar':'Suspender';btn.addEventListener('click',async()=>{if(!confirm('¿'+(u.blocked?'Rehabilitar':'Suspender')+' la cuenta '+u.email+'?'))return;btn.disabled=true;try{await api('/api/admin/block',{userId:u.id,block:!u.blocked});$('#adminMessage').textContent='Permiso actualizado.';loadAdmin();}catch(e){$('#adminMessage').textContent=e.message;btn.disabled=false;}});action.append(btn);}else action.textContent='Propietario';tr.append(action);tbody.append(tr);
-    }
-  }
-  async function loadAdmin(){const isAdmin=state.user?.role==='admin';$('#adminGate').classList.toggle('hidden',isAdmin);$('#adminContent').classList.toggle('hidden',!isAdmin);if(!isAdmin)return;
-    try{const d=await api('/api/admin');state.adminData=d;$('#metricUsers').textContent=d.stats.users;$('#metricImages').textContent=d.stats.totalImages;$('#metricVideos').textContent=d.stats.totalVideos;$('#metricSeconds').textContent=d.stats.videoSecondsToday+' s';
-      const grid=$('#engineSettings');grid.innerHTML='';grid.append(tech('Motor de imágenes',d.engine.imageReady?'Conectado':'Falta API'),tech('Motor de videos',d.engine.videoReady?'Conectado':'Falta API'),tech('Presupuesto imágenes/día',String(d.engine.imageDailyBudget)),tech('Presupuesto video/día',d.engine.videoSecondsDailyBudget+' s'),tech('Base de datos duradera',d.engine.storagePersistent?'Configurada':'Temporal de prueba'));
-      $('#adminMessage').textContent='Administración privada activa. No existen pagos ni suscripciones.';renderAdminUsers();
-    }catch(e){$('#adminMessage').textContent='Error de administración: '+e.message;}
-  }
-  $('#userSearch').addEventListener('input',renderAdminUsers);$('#refreshAdmin').addEventListener('click',loadAdmin);
-  async function init(){switchPage('create');switchMode('video');await refreshSession();try{const s=await api('/api/status');if(!s.configured){status('Estudio de prueba publicado. El motor real se activará cuando el propietario configure las claves API y el presupuesto. No se generan videos falsos.','waiting');}}
-    catch(err){status('El servidor no responde: '+err.message,'error');}
-  }
-  init();
+ const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+ const state={user:null,public:null,view:'create',mode:'text',threadId:null,thread:null,threads:[],library:[],jobs:new Map(),busy:false,authMode:'login',uploadData:null,objectUrl:null,admin:null,poll:null};
+ const STYLES={cinematic:'Cinematográfico',anime:'Anime',clay:'Animado 3D',realistic:'Realista',mono:'Blanco y negro',fantasy:'Fantasía'};
+ const STATUS={submitting:'Enviando',queued:'En cola',in_progress:'Generando',completed:'Terminado',failed:'Error',nsfw:'No disponible',canceled:'Cancelado',processing:'Procesando'};
+ function esc(t){return String(t??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+ function date(x){try{return new Date(x).toLocaleDateString('es-PE',{day:'2-digit',month:'short',year:'numeric'});}catch{return '—';}}
+ function ago(x){if(!x)return '';try{return new Date(x).toLocaleString('es-PE',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}catch{return '';}}
+ async function api(p,b){let res=await fetch(p,{method:b===undefined?'GET':'POST',credentials:'same-origin',headers:b===undefined?{}:{'Content-Type':'application/json'},body:b===undefined?undefined:JSON.stringify(b)}),data;try{data=await res.json()}catch{throw Error('El servidor no devolvió una respuesta válida.');}if(!res.ok)throw Error(data.error||'No se pudo completar la operación.');return data;}
+ function note(t,error=false){const el=$('#composerMessage');el.textContent=t;el.classList.toggle('error',error);el.classList.remove('hidden');}
+ function clearNote(){$('#composerMessage').classList.add('hidden');}
+ function redrawIdentity(){let u=state.user;$('#accountName').textContent=u?.email?.split('@')[0]||'Invitado';$('#accountRole').textContent=u?.role==='admin'?'Administrador':u?(u.member?'Acceso activo':'Acceso pendiente'):'Iniciar sesión';$('#avatar').textContent=u?.email?.charAt(0).toUpperCase()||'N';$('#adminNav').classList.toggle('hidden',u?.role!=='admin');$('#topAccess').textContent=u?.role==='admin'?'Administrador':u?.member?'Acceso activo':'Sin membresía';const ready=state.public?.videoReady;$('#engineStatus').textContent=ready?'Motor de video disponible':'Motor IA pendiente de activación';$('.dot').classList.toggle('on',!!ready);}
+ function switchView(view){if(view==='admin'&&state.user?.role!=='admin'){openAuth();return;}state.view=view;$('#sidebar').classList.remove('open');$$('.view').forEach(el=>el.classList.toggle('hidden',el.id!=='view'+view[0].toUpperCase()+view.slice(1)));$$('[data-view]').forEach(el=>el.classList.toggle('current',el.dataset.view===view));$('#pageLabel').textContent={create:'Estudio creativo',library:'Mis creaciones',membership:'Mi membresía',admin:'Administración'}[view]||'Estudio creativo';if(view==='library')loadLibrary();if(view==='membership')loadMembership();if(view==='admin')loadAdmin();}
+ $$('[data-view]').forEach(b=>b.addEventListener('click',()=>switchView(b.dataset.view)));$('#menuToggle').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
+ function setMode(mode){state.mode=mode;$$('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));$('#imageUpload').classList.toggle('hidden',mode!=='image');$('#modeBadge').textContent=mode==='text'?'TEXTO A VIDEO':'IMAGEN + TEXTO A VIDEO';clearNote();}
+ $$('[data-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
+ $('#imageFile').addEventListener('change',async()=>{const file=$('#imageFile').files?.[0];if(!file){clearUpload();return;}if(file.size>4_500_000||!['image/png','image/jpeg','image/webp'].includes(file.type)){clearUpload();note('Usa JPG, PNG o WebP de hasta 4,5 MB.',true);return;}if(state.objectUrl)URL.revokeObjectURL(state.objectUrl);state.objectUrl=URL.createObjectURL(file);$('#imageThumb').src=state.objectUrl;$('#fileName').textContent=file.name;$('#filePreview').classList.remove('hidden');state.uploadData=null;clearNote();});
+ function clearUpload(){if(state.objectUrl)URL.revokeObjectURL(state.objectUrl);state.objectUrl=null;state.uploadData=null;$('#imageFile').value='';$('#fileName').textContent='Añadir imagen de referencia (JPG, PNG o WebP)';$('#filePreview').classList.add('hidden');}
+ $('#removeImage').addEventListener('click',clearUpload);
+ function fileData(f){return new Promise((resolve,reject)=>{const rd=new FileReader();rd.onload=()=>resolve(rd.result);rd.onerror=()=>reject(Error('No se pudo leer la imagen.'));rd.readAsDataURL(f);});}
+ function updateDuration(){const n=Number($('#duration').value);$('#durationHint').textContent=!Number.isInteger(n)||n<1||n>120?'Elige entre 1 y 120 segundos.':n<4?'La creación de 1 a 3 segundos requiere recorte de un clip. Aún no disponible.':n>30?'Más de 30 segundos requiere unir escenas. Aún no disponible.':'El modelo disponible admite clips de 4 a 30 segundos.';}
+ $('#duration').addEventListener('input',updateDuration);
+ async function refresh(){try{const [me,pub]=await Promise.all([api('/api/me'),api('/api/public')]);state.user=me.user;state.public=pub;redrawIdentity();if(state.user)await loadThreads();else{state.threadId=null;state.thread=null;renderThreads();}return true;}catch(e){redrawIdentity();note(e.message,true);return false;}}
+ function openAuth(mode){state.authMode=mode||'login';$('#authOverlay').classList.remove('hidden');$('#authForm').classList.toggle('hidden',!!state.user);$('#authSwitch').classList.toggle('hidden',!!state.user);$('#logout').classList.toggle('hidden',!state.user);$('#authTitle').textContent=state.user?'Mi cuenta':state.authMode==='register'?'Crear cuenta':'Iniciar sesión';$('#authDescription').textContent=state.user?state.user.email:state.authMode==='register'?'Regístrate para guardar tu historial. Usa una contraseña exclusiva para esta aplicación.':'Accede a tus conversaciones y creaciones.';$('#authSubmit').textContent=state.authMode==='register'?'Crear cuenta':'Iniciar sesión';$('#authSwitch').textContent=state.authMode==='register'?'Ya tengo cuenta. Iniciar sesión':'Crear una cuenta';$('#authPassword').autocomplete=state.authMode==='register'?'new-password':'current-password';$('#authStatus').textContent='';}
+ ['accountBtn','topAccount'].forEach(id=>$('#'+id).addEventListener('click',()=>openAuth()));$('#authSwitch').addEventListener('click',()=>openAuth(state.authMode==='login'?'register':'login'));$('#closeAuth').addEventListener('click',()=>$('#authOverlay').classList.add('hidden'));$('#authOverlay').addEventListener('click',e=>{if(e.target.id==='authOverlay')$('#authOverlay').classList.add('hidden');});
+ $('#authForm').addEventListener('submit',async e=>{e.preventDefault();$('#authSubmit').disabled=true;try{const r=await api(state.authMode==='register'?'/api/register':'/api/login',{email:$('#authEmail').value.trim(),password:$('#authPassword').value});state.user=r.user;$('#authOverlay').classList.add('hidden');$('#authPassword').value='';await refresh();if(state.user?.role==='admin')note('Has iniciado sesión como administrador.');else clearNote();}catch(err){$('#authStatus').textContent=err.message;}finally{$('#authSubmit').disabled=false;}});
+ $('#logout').addEventListener('click',async()=>{try{await api('/api/logout',{});}catch{}state.user=null;state.threadId=null;state.thread=null;$('#authOverlay').classList.add('hidden');await refresh();switchView('create');renderTimeline();});
+ function renderThreads(){$('#threads').innerHTML=state.threads.length?state.threads.map(t=>`<button type="button" class="thread-item ${t.id===state.threadId?'active':''}" data-thread="${esc(t.id)}" title="${esc(t.title)}">${esc(t.title)}</button>`).join(''):`<p class="side-empty">${state.user?'Las conversaciones aparecerán aquí.':'Inicia sesión para guardar tus conversaciones.'}</p>`;}
+ async function loadThreads(){try{state.threads=(await api('/api/threads')).items;renderThreads();}catch(e){note(e.message,true);}}
+ $('#threads').addEventListener('click',e=>{const b=e.target.closest('[data-thread]');if(b)openThread(b.dataset.thread);});
+ $('#refreshThreads').addEventListener('click',()=>state.user?loadThreads():openAuth());
+ $('#newThread').addEventListener('click',()=>{state.threadId=null;state.thread=null;state.jobs.clear();renderThreads();switchView('create');renderTimeline();$('#prompt').value='';clearUpload();clearNote();});
+ async function openThread(id){if(!state.user){openAuth();return;}try{const r=await api('/api/threads/'+encodeURIComponent(id));state.thread=r.thread;state.threadId=id;switchView('create');renderThreads();await loadLibrary(false);renderTimeline();}catch(e){note(e.message,true);}}
+ function renderTimeline(){const tl=$('#timeline');tl.innerHTML='';if(!state.thread||!state.thread.messages?.length){tl.innerHTML='<div class="intro" id="intro"><div class="intro-overline">UN ESPACIO PARA TUS IDEAS</div><h1>Todo comienza<br>con una <em>idea.</em></h1><p>Describe una escena. Elige un estilo. Convierte tu imaginación en una historia en movimiento.</p></div>';return;}for(const m of state.thread.messages){if(m.kind==='prompt'){const row=document.createElement('div');row.className='message user';row.innerHTML=`<div class="bubble">${esc(m.text)}<div class="bubble-meta">${esc(STYLES[m.style]||m.style||'')} · ${esc(m.duration)} s${m.hasImage?' · Imagen de referencia':''} · ${esc(ago(m.createdAt))}</div></div>`;tl.append(row);}else if(m.kind==='creation'){const item=state.library.find(x=>x.id===m.creationId);if(item)tl.append(createResultCard(item));else {const p=document.createElement('div');p.className='message';p.textContent='La generación está registrada. Actualiza Mis creaciones para consultar su estado.';tl.append(p);}}}tl.scrollTop=tl.scrollHeight;}
+ function createResultCard(item){const holder=document.createElement('div');holder.className='message';holder.dataset.creationId=item.id;const card=document.createElement('div');card.className='card-result';const top=document.createElement('div');top.className='card-top';const title=document.createElement('strong');title.textContent=item.type==='image'?'Imagen terminada':'Video con IA';const status=document.createElement('span');status.className='status-pill';status.textContent=STATUS[item.status]||'Pendiente';top.append(title,status);card.append(top);if(item.status==='completed'&&item.url){const media=document.createElement(item.type==='image'?'img':'video');media.src=item.url;if(item.type==='video'){media.controls=true;media.playsInline=true;media.preload='metadata';}else media.alt='Imagen generada';card.append(media);const acts=document.createElement('div');acts.className='card-actions';const a=document.createElement('a');a.className='soft-button';a.href=item.url;a.target='_blank';a.rel='noopener noreferrer';a.download='neon-studio-'+item.id+(item.type==='image'?'.png':'.mp4');a.textContent='Descargar';acts.append(a);const full=document.createElement('button');full.type='button';full.className='soft-button';full.textContent='Pantalla completa';full.addEventListener('click',()=>{if(item.type==='video'){if(media.requestFullscreen)media.requestFullscreen();else openLightbox(item);}else openLightbox(item);});acts.append(full);card.append(acts);}else if(['failed','canceled','nsfw'].includes(item.status)){const err=document.createElement('div');err.className='card-error';err.textContent=item.error||'No se pudo completar esta generación.';card.append(err);}else{const box=document.createElement('div');box.className='progress-stage';box.innerHTML='<div class="pulse"></div><strong>El motor está procesando la escena</strong><small>En cola → Generando → Finalizando</small>';card.append(box);if(item.type==='video')watchJob(item.id);}holder.append(card);return holder;}
+ function openLightbox(item){const box=$('#lightboxBody');box.textContent='';const media=document.createElement(item.type==='image'?'img':'video');media.src=item.url;if(item.type==='video'){media.controls=true;media.autoplay=true;}box.append(media);$('#lightbox').classList.remove('hidden');}
+ function closeLightbox(){const media=$('#lightboxBody video');if(media)media.pause();$('#lightbox').classList.add('hidden');$('#lightboxBody').textContent='';}$('#closeLightbox').addEventListener('click',closeLightbox);$('#lightbox').addEventListener('click',e=>{if(e.target.id==='lightbox')closeLightbox();});document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLightbox();$('#authOverlay').classList.add('hidden');$('#sidebar').classList.remove('open');}});
+ function watchJob(id){if(state.jobs.has(id))return;const interval=setInterval(async()=>{try{const r=await api('/api/video/status/'+encodeURIComponent(id));const idx=state.library.findIndex(x=>x.id===id);if(idx!==-1)state.library[idx]=r.item;else state.library.unshift(r.item);const old=timelineNode(id);if(old)old.replaceWith(createResultCard(r.item));if(['completed','failed','canceled','nsfw'].includes(r.item.status)){clearInterval(interval);state.jobs.delete(id);}}catch(e){/* Intermittent network problems should not be presented as completed work. */}},7000);state.jobs.set(id,interval);}
+ function timelineNode(id){return [...$('#timeline').children].find(x=>x.dataset?.creationId===id);}
+ function stopJobs(){state.jobs.forEach(x=>clearInterval(x));state.jobs.clear();}
+ async function loadLibrary(show=true){if(!state.user){if(show)$('#libraryGrid').innerHTML='<p class="muted">Inicia sesión para ver tus creaciones.</p>';return;}try{state.library=(await api('/api/library')).items;if(show)renderLibrary();}catch(e){if(show)$('#libraryGrid').textContent=e.message;}}
+ function renderLibrary(){const grid=$('#libraryGrid');grid.replaceChildren();if(!state.library.length){grid.innerHTML='<p class="muted">Todavía no tienes generaciones terminadas.</p>';return;}for(const item of state.library){const div=document.createElement('article');div.className='library-tile';if(item.status==='completed'&&item.url){let media=document.createElement(item.type==='video'?'video':'img');media.src=item.url;if(item.type==='video')media.controls=true;div.append(media);}const h=document.createElement('h3');h.textContent=(item.type==='video'?'Video':'Imagen')+' · '+(STYLES[item.style]||item.style||'');div.append(h);const meta=document.createElement('p');meta.textContent=(STATUS[item.status]||item.status)+' · '+date(item.createdAt);div.append(meta);if(item.threadId){const b=document.createElement('button');b.type='button';b.className='soft-button';b.textContent='Ver conversación';b.addEventListener('click',()=>openThread(item.threadId));div.append(b);}grid.append(div);}}
+ async function loadMembership(){const title=$('#membershipTitle'),desc=$('#membershipDescription');const pub=state.public;if(!state.user){title.textContent='Inicia sesión para consultar tu acceso';desc.textContent='Puedes registrarte para guardar tus conversaciones.';}else{title.textContent=state.user.role==='admin'?'Acceso del propietario':state.user.member?'Tu acceso está activo':'Acceso pendiente de activación';const until=[state.user.paidUntil,state.user.grantUntil].filter(Boolean).sort().at(-1);desc.textContent=until?'Vigencia registrada hasta el '+date(until)+'.':pub?.billingEnabled?'Espera la aprobación de un pago o una invitación gratuita.':'El estudio todavía no ha activado cobros.';}
+ const content=$('#yapeContent');content.replaceChildren();if(!pub?.billingEnabled){content.innerHTML='<p class="muted">El titular todavía no ha activado Yape. No hagas ningún depósito hasta ver el número confirmado aquí.</p>';}
+ else{const details=document.createElement('div');details.innerHTML=`<p class="muted">Paga <strong>S/ 10</strong> al Yape registrado y espera que el administrador verifique el depósito.</p><p style="margin:14px 0"><strong>Yape: ${esc(pub.yapePhone)}</strong><br><small>${esc(pub.yapeHolder)}</small></p>`;content.append(details);const form=document.createElement('form');form.id='paymentForm';form.innerHTML='<label class="form-field">Código de operación Yape<input name="reference" minlength="3" maxlength="50" required placeholder="Código de operación"></label><button class="soft-button primary" type="submit">Solicitar revisión del pago</button><p class="form-status" id="payStatus"></p>';content.append(form);form.addEventListener('submit',async e=>{e.preventDefault();if(!state.user){openAuth();return;}const ref=form.elements.reference.value.trim();const btn=form.querySelector('button');btn.disabled=true;try{await api('/api/payments/request',{reference:ref});$('#payStatus').textContent='Solicitud registrada. Se activará únicamente después de verificar el depósito en Yape.';await loadPaymentList();}catch(err){$('#payStatus').textContent=err.message;}finally{btn.disabled=false;}});}
+ await loadPaymentList();}
+ async function loadPaymentList(){if(!state.user){$('#myPayments').textContent='Inicia sesión para revisar tus pagos.';return;}try{const r=await api('/api/payments');$('#myPayments').innerHTML=r.payments?.length?r.payments.map(p=>`<div style="padding:11px 0;border-bottom:1px solid #3a3542">Operación ${esc(p.reference)} · ${esc(p.status==='approved'?'Aprobado':p.status==='rejected'?'Rechazado':'Pendiente de verificación')} · ${esc(date(p.createdAt))}</div>`).join(''):'<p class="muted">No hay solicitudes registradas.</p>';}catch(e){$('#myPayments').textContent=e.message;}}
+ async function loadAdmin(){if(state.user?.role!=='admin')return;try{state.admin=await api('/api/admin');renderAdmin();}catch(e){$('#adminStatus').textContent=e.message;}}
+ function renderAdmin(){const d=state.admin;$('#statUsers').textContent=d.stats.users;$('#statVideos').textContent=d.stats.totalVideos;$('#statPending').textContent=d.payments.filter(p=>p.status==='pending').length;$('#statRevenue').textContent='S/ '+d.stats.approvedRevenue;$('#yapePhone').value=d.paymentSettings.yapePhone||'';$('#yapeHolder').value=d.paymentSettings.yapeHolder||'';$('#yapeEnabled').checked=!!d.paymentSettings.billingEnabled;$('#engineDetailAdmin').innerHTML=`<p>Video Seedance: <strong>${d.engine.videoReady?'Conectado':'Pendiente de clave API y presupuesto'}</strong></p><p>Imágenes Nano Banana: <strong>${d.engine.imageReady?'Conectado':'Pendiente de clave API y presupuesto'}</strong></p><p>Almacenamiento permanente: <strong>${d.engine.storagePersistent?'Configurado':'No configurado (prueba temporal)'}</strong></p>`;renderAdminUsers();renderAdminPayments();}
+ function renderAdminUsers(){const filter=$('#filterUsers').value.toLowerCase().trim();const all=state.admin.users.filter(u=>u.email.toLowerCase().includes(filter));$('#adminUsers').innerHTML=all.length?all.map(u=>`<tr><td>${esc(u.email)}<small style="display:block">${u.role==='admin'?'Propietario':'Usuario'}</small></td><td>${u.role==='admin'?'Ilimitado (admin)':u.member?'Activo':'Pendiente'}<small style="display:block">${u.grantUntil?'Pase hasta '+esc(date(u.grantUntil)):u.paidUntil?'Pago hasta '+esc(date(u.paidUntil)):'Sin pase gratuito'}</small></td><td>${u.active?'Activo':'Suspendido'}</td><td>${u.role==='admin'?'—':`<button class="soft-button" data-admin="grant" data-user="${esc(u.id)}">30 días gratis</button><button class="soft-button" data-admin="revoke" data-user="${esc(u.id)}">Revocar pase</button><button class="soft-button ${u.active?'danger':''}" data-admin="block" data-user="${esc(u.id)}" data-flag="${u.active?'true':'false'}">${u.active?'Suspender':'Reactivar'}</button>`}</td></tr>`).join(''):'<tr><td colspan="4">No hay usuarios con ese correo.</td></tr>';}
+ function renderAdminPayments(){const a=state.admin.payments;$('#adminPayments').innerHTML=a.length?a.map(p=>`<tr><td>${esc(p.email)}</td><td>${esc(p.reference)}</td><td>${esc(date(p.createdAt))}</td><td>${esc(p.status==='approved'?'Aprobado':p.status==='rejected'?'Rechazado':'Pendiente')}</td><td>${p.status==='pending'?`<button class="soft-button" data-payment="approved" data-id="${esc(p.id)}">Aprobar</button><button class="soft-button danger" data-payment="rejected" data-id="${esc(p.id)}">Rechazar</button>`:'Revisado'}</td></tr>`).join(''):'<tr><td colspan="5">Todavía no hay pagos para revisar.</td></tr>';}
+ $('#filterUsers').addEventListener('input',()=>state.admin&&renderAdminUsers());$('#refreshAdmin').addEventListener('click',loadAdmin);
+ $('#adminUsers').addEventListener('click',async e=>{const b=e.target.closest('[data-admin]');if(!b)return;const action=b.dataset.admin;const id=b.dataset.user;const msg=action==='grant'?'¿Conceder 30 días de acceso gratis?':action==='revoke'?'¿Revocar el pase gratuito?':'¿Modificar la suspensión de esta cuenta?';if(!confirm(msg))return;b.disabled=true;try{await api(action==='block'?'/api/admin/block':'/api/admin/grant',action==='block'?{userId:id,block:b.dataset.flag==='true'}:{userId:id,revoke:action==='revoke'});$('#adminStatus').textContent='Cuenta actualizada correctamente.';await loadAdmin();}catch(err){$('#adminStatus').textContent=err.message;}finally{b.disabled=false;}});
+ $('#adminPayments').addEventListener('click',async e=>{const b=e.target.closest('[data-payment]');if(!b)return;if(!confirm(b.dataset.payment==='approved'?'Solo aprueba si confirmaste los S/ 10 en tu aplicación Yape. ¿Ya recibiste el dinero?':'¿Rechazar este código de pago?'))return;b.disabled=true;try{await api('/api/admin/payment',{paymentId:b.dataset.id,action:b.dataset.payment});await loadAdmin();}catch(err){$('#adminStatus').textContent=err.message;}finally{b.disabled=false;}});
+ $('#yapeForm').addEventListener('submit',async e=>{e.preventDefault();const enabled=$('#yapeEnabled').checked;const phone=$('#yapePhone').value.trim(),holder=$('#yapeHolder').value.trim();if(enabled&&!confirm('Al activar Yape, la aplicación mostrará este número a los usuarios. ¿Confirmas que es tu cuenta receptora?'))return;try{await api('/api/admin/yape',{phone,holder,enabled});$('#yapeStatus').textContent='Configuración guardada.';state.public=await api('/api/public');await loadAdmin();redrawIdentity();}catch(err){$('#yapeStatus').textContent=err.message;}});
+ async function makeThread(prompt){if(state.threadId&&state.thread)return state.thread;const title=prompt.replace(/\s+/g,' ').trim().slice(0,55);const r=await api('/api/threads/new',{title});state.thread=r.thread;state.threadId=r.thread.id;await loadThreads();return r.thread;}
+ $('#composer').addEventListener('submit',async e=>{e.preventDefault();if(state.busy)return;const prompt=$('#prompt').value.trim(),duration=Number($('#duration').value),style=$('#style').value,aspect=$('#aspect').value,sound=$('#sound').checked;if(!state.user){openAuth('login');note('Inicia sesión para guardar esta generación.',true);return;}if(!state.user.member){switchView('membership');return;}if(prompt.length<10){note('Describe una escena de al menos 10 caracteres.',true);return;}if(!Number.isInteger(duration)||duration<1||duration>120){note('Elige una duración de 1 a 120 segundos.',true);return;}if(duration<4||duration>30){note('Por ahora, la API Seedance acepta clips de 4 a 30 segundos. Para 1 a 3 o 31 a 120 segundos falta implementar recorte o composición real. No generaremos otra duración sin avisarte.',true);return;}if(state.mode==='image'&&!$('#imageFile').files?.length){note('Selecciona primero la imagen que quieres animar.',true);return;}
+ state.busy=true;$('#generate').disabled=true;clearNote();try{const thread=await makeThread(prompt);await api('/api/threads/add',{threadId:thread.id,text:prompt,style,duration,mode:state.mode,hasImage:state.mode==='image'});thread.messages.push({id:'temporary-'+Date.now(),kind:'prompt',text:prompt,style,duration,mode:state.mode,hasImage:state.mode==='image',createdAt:new Date().toISOString()});renderTimeline();let imageData;if(state.mode==='image')imageData=await fileData($('#imageFile').files[0]);if(!state.public?.videoReady){note('El motor real todavía no está activado. La idea quedó guardada en tu conversación; no se creó ni cobró ningún video.',true);return;}const result=await api('/api/video/generate',{threadId:thread.id,prompt,style,aspect,duration,sound,generationMode:state.mode,imageData});state.library.unshift(result.item);state.thread.messages.push({kind:'creation',creationId:result.item.id,mediaType:'video',createdAt:new Date().toISOString()});renderTimeline();$('#prompt').value='';clearUpload();await loadThreads();}catch(err){note(err.message,true);if(state.threadId)try{state.thread=(await api('/api/threads/'+state.threadId)).thread;renderTimeline();}catch{}}finally{state.busy=false;$('#generate').disabled=false;}});
+ // Keep the full client functional in offline-preview and with a disabled AI engine.
+ updateDuration();renderTimeline();refresh();
 })();
