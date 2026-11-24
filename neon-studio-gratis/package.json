@@ -1,0 +1,11 @@
+{
+  "name": "neon-studio-free-ai",
+  "version": "3.0.0",
+  "description": "NEON STUDIO - Free-to-use AI image and video studio; provider access is charged to the operator",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check app.js"
+  },
+  "engines": {"node": ">=20"}
+}
