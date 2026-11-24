@@ -1,7 +1,7 @@
 'use strict';
 /**
- * NEON STUDIO 3.0 — Free-for-visitors studio, with licensed third-party image/video AI.
- * No billing or payments routes. Production operation requires HTTPS, a persistent
+ * NEON STUDIO 5.0 — Studio with licensed, separately configured image/video APIs.
+ * Yape payments are manual, off until a real video engine is enabled. Requires persistent
  * storage path, a secret, a configured AI provider and budgets. No secret in browser.
  */
 const http = require('node:http');
@@ -15,12 +15,13 @@ const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString('he
 const STATE_PATH = process.env.STATE_PATH || path.join(root, 'data', 'state.json');
 const MEDIA_PATH = process.env.MEDIA_PATH || path.join(root, 'data', 'media');
 const PERSISTENT_STORE = process.env.PERSISTENT_STORE === 'true';
-const PUBLIC_BASE = process.env.PUBLIC_BASE_URL || 'https://neon-studio-gratis-prueba.onrender.com';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-2.5-flash-image';
 const HF_KEY = process.env.HF_API_KEY || process.env.HF_CREDENTIALS || '';
+const VIDEO_MODEL = 'bytedance/seedance-2.5';
+const DOWNLOAD_MAX_BYTES = 450 * 1024 * 1024;
 const IMAGE_BUDGET = Math.max(0, Number(process.env.IMAGE_DAILY_BUDGET || 0));
 const VIDEO_SECONDS_BUDGET = Math.max(0, Number(process.env.VIDEO_DAILY_SECONDS_BUDGET || 0));
 const USER_IMAGE_DAILY_LIMIT = Math.max(1, Number(process.env.USER_IMAGE_DAILY_LIMIT || 4));
@@ -77,9 +78,51 @@ function utcDay(){return new Date().toISOString().slice(0,10);}
 function countToday(collection,pred=()=>true){const day=utcDay();return collection.filter(x=>x.createdAt?.startsWith(day)&&pred(x)).length;}
 const makeBrief=(prompt,style)=>`${prompt}\nArt direction: ${STYLES[style]}\nPreserve intended appearance and spatial continuity; do not add captions, logos, or letters.`;
 function safeImage(image){return {id:image.id,type:'image',style:image.style,createdAt:image.createdAt,status:image.status==='processing'?'processing':'completed',url:image.status==='completed'?'/api/images/'+image.id:null,aspect:image.aspect,threadId:image.threadId||null,prompt:image.prompt||''};}
-function safeVideo(video){return {id:video.id,type:'video',style:video.style,duration:video.duration,createdAt:video.createdAt,status:video.status,url:video.status==='completed'?video.url:null,error:video.error||null,threadId:video.threadId||null,prompt:video.prompt||'',generationMode:video.generationMode||'text'};}
+function safeVideo(video){return {id:video.id,type:'video',style:video.style,duration:video.duration,createdAt:video.createdAt,status:video.status,url:video.status==='completed'?video.url:null,downloadUrl:video.status==='completed'?'/api/video/download/'+video.id:null,progress:Number.isFinite(video.progress)?video.progress:null,error:video.error||null,threadId:video.threadId||null,prompt:video.prompt||'',generationMode:video.generationMode||'text'};}
 async function sendGemini(prompt){const url='https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL+':generateContent';const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':GEMINI_KEY},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseModalities:['TEXT','IMAGE']}}),signal:AbortSignal.timeout(105000)});const data=await response.json();if(!response.ok)throw Error(`API de imágenes: HTTP ${response.status}. Comprueba acceso y saldo de la API.`);const candidates=data.candidates||[];const parts=candidates.flatMap(c=>c.content?.parts||[]);const item=parts.find(p=>p.inlineData?.data&&/^image\/(png|jpeg|webp)$/.test(p.inlineData?.mimeType||''));if(!item)throw Error('La IA no devolvió una imagen válida.');const bytes=Buffer.from(item.inlineData.data,'base64');if(bytes.length<1000||bytes.length>17_000_000)throw Error('La imagen recibida tiene un tamaño no admitido.');return {buffer:bytes,mime:item.inlineData.mimeType};}
 async function higgsfield(endpoint,method,body){const res=await fetch('https://api.higgsfield.ai/'+endpoint,{method,headers:{'Authorization':'Key '+HF_KEY,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(30000)});let data={};try{data=await res.json();}catch{}if(!res.ok)throw Error(`API de video: HTTP ${res.status}; revisa credenciales, saldo y parámetros.`);return data;}
+function validateMediaUrl(raw, kind='download'){
+  const u = new URL(raw);
+  if(u.protocol!=='https:'||u.username||u.password||u.port) throw Error('El proveedor no entregó un enlace multimedia seguro.');
+  const host=u.hostname.toLowerCase();
+  const suffixes = kind==='upload'
+    ? ['.amazonaws.com','.cloudflarestorage.com','.higgsfield.ai','.higgs.ai','.r2.dev']
+    : ['.cloudfront.net','.amazonaws.com','.higgsfield.ai','.higgs.ai','.googleapis.com','.googleusercontent.com','.r2.dev'];
+  if(!(suffixes.some(s => host.endsWith(s)) || ['higgsfield.ai','higgs.ai','storage.googleapis.com'].includes(host)) || host==='localhost') throw Error('Dominio multimedia no autorizado: verifica el proveedor.');
+  return u.toString();
+}
+async function uploadReferenceToHiggsfield(ref){
+  const signed=await higgsfield('files/generate-upload-url','POST',{content_type:ref.mime});
+  if(typeof signed.upload_url!=='string'||typeof signed.public_url!=='string')throw Error('Higgsfield no devolvió los enlaces de carga de referencia.');
+  const target=validateMediaUrl(signed.upload_url,'upload');
+  const publicUrl=validateMediaUrl(signed.public_url,'download');
+  const headers={'Content-Type':ref.mime};
+  if(signed.upload_headers&&typeof signed.upload_headers==='object'&&!Array.isArray(signed.upload_headers)){
+    for (const [key,value] of Object.entries(signed.upload_headers)){
+      if(typeof value==='string'&&/^[a-zA-Z0-9-]+$/.test(key)&&!/authorization|cookie|host/i.test(key))headers[key]=value;
+    }
+  }
+  const done=await fetch(target,{method:'PUT',headers,body:ref.bytes,redirect:'error',signal:AbortSignal.timeout(90000)});
+  if(!done.ok)throw Error('No se pudo subir la imagen de referencia al motor de IA (HTTP '+done.status+').');
+  return publicUrl;
+}
+async function downloadVideo(res, video){
+  if(video.status!=='completed'||!video.url)return fail(res,404,'El video aún no está terminado.');
+  let url;try{url=validateMediaUrl(video.url);}catch{return fail(res,502,'El enlace del proveedor no está permitido para descarga directa.');}
+  try{
+    const remote=await fetch(url,{method:'GET',redirect:'manual',signal:AbortSignal.timeout(180000)});
+    if(remote.status>=300&&remote.status<400)return fail(res,502,'El proveedor redirige el archivo; abre el video en una pestaña nueva.');
+    if(!remote.ok||!remote.body)return fail(res,502,'No se pudo descargar el archivo del proveedor.');
+    const len=Number(remote.headers.get('content-length')||0);
+    if(len>DOWNLOAD_MAX_BYTES){await remote.body.cancel();return fail(res,413,'Video demasiado grande para descarga directa.');}
+    const {Readable}=require('node:stream');let size=0;
+    res.writeHead(200,{'Content-Type':'video/mp4','Content-Disposition':'attachment; filename="neon-studio-'+video.id+'.mp4"','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});
+    const stream=Readable.fromWeb(remote.body);
+    stream.on('data',chunk=>{size+=chunk.length;if(size>DOWNLOAD_MAX_BYTES)stream.destroy(Error('Archivo demasiado grande'));});
+    stream.on('error',()=>res.destroy());stream.pipe(res);
+  }catch{if(!res.headersSent)fail(res,502,'Fallo la descarga desde el proveedor.');else res.destroy();}
+}
+
 async function serveImage(res,id,u){const found=db.images.find(x=>x.id===id);if(!found||found.userId!==u?.id&&! (u?.role==='admin'))return fail(res,404,'Imagen no encontrada');const file=path.join(MEDIA_PATH,id+'.'+found.ext);if(!fs.existsSync(file))return fail(res,410,'La imagen ya no está guardada en el servidor.');res.writeHead(200,{'Content-Type':found.mime,'Content-Disposition':'inline; filename="neon-'+id+'.'+found.ext+'"','Cache-Control':'private, max-age=300','X-Content-Type-Options':'nosniff'});fs.createReadStream(file).pipe(res);}
 
 function parseReferenceData(raw){
@@ -87,15 +130,13 @@ function parseReferenceData(raw){
  const m=/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(raw);
  if(!m)return null;
  const bytes=Buffer.from(m[2],'base64');if(bytes.length<1024||bytes.length>4_500_000)return null;
+ const isPng=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+ const isJpg=bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff;
+ const isWebp=bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP';
+ if(!((m[1]==='image/png'&&isPng)||(m[1]==='image/jpeg'&&isJpg)||(m[1]==='image/webp'&&isWebp)))return null;
  const ext=m[1]==='image/jpeg'?'jpg':m[1].split('/')[1];return {bytes,mime:m[1],ext};
 }
-function serveReference(res,id){
- const v=db.videos.find(x=>x.referenceId===id);
- if(!v)return fail(res,404,'Referencia no encontrada');
- const file=path.join(MEDIA_PATH,'ref-'+id+'.'+v.referenceExt);
- if(!fs.existsSync(file))return fail(res,410,'Referencia temporal no disponible');
- res.writeHead(200,{'Content-Type':v.referenceMime,'X-Content-Type-Options':'nosniff','Cache-Control':'private, max-age=600'});fs.createReadStream(file).pipe(res);
-}
+
 const server=http.createServer(async(req,res)=>{
   const route=new URL(req.url,'http://local').pathname;
   const u=userFrom(req);
@@ -103,7 +144,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&route==='/api/status')return reply(res,200,{ok:true,freeForVisitors:!db.config.billingEnabled,configured:imageReady()||videoReady(),imageReady:imageReady(),videoReady:videoReady(),storagePersistent:PERSISTENT_STORE,mode:PRODUCTION?'production':'development'});
   if(req.method==='GET'&&route==='/api/me')return reply(res,200,{user:safeUser(u),imageReady:imageReady(),videoReady:videoReady(),freeForVisitors:!db.config.billingEnabled});
   if(req.method==='GET'&&route.startsWith('/api/images/'))return serveImage(res,route.slice('/api/images/'.length),u);
-  if(req.method==='GET'&&route.startsWith('/api/reference/'))return serveReference(res,route.slice('/api/reference/'.length));
+  // Las imágenes privadas se suben directamente al almacenamiento firmado de Higgsfield; no hay ruta pública de referencias.
   if(req.method==='GET'&&route==='/api/public')return reply(res,200,{priceSoles:10,billingEnabled:db.config.billingEnabled&&!!db.config.yapePhone,yapePhone:db.config.billingEnabled?db.config.yapePhone:'',yapeHolder:db.config.billingEnabled?db.config.yapeHolder:'',imageReady:imageReady(),videoReady:videoReady(),maxSingleClip:30,requestedMaxDuration:120,storagePersistent:PERSISTENT_STORE});
   if(req.method==='GET'&&route==='/api/threads'){if(!active(u))return fail(res,401,'Inicia sesión.');return reply(res,200,{items:db.threads.filter(t=>t.userId===u.id).map(t=>({id:t.id,title:t.title,updatedAt:t.updatedAt,createdAt:t.createdAt})).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,100)});}
   if(req.method==='GET'&&route.startsWith('/api/threads/')){if(!active(u))return fail(res,401,'Inicia sesión.');const t=threadFor(u,route.slice('/api/threads/'.length));if(!t)return fail(res,404,'Conversación no encontrada.');return reply(res,200,{thread:t});}
@@ -112,10 +153,18 @@ const server=http.createServer(async(req,res)=>{
     if(!active(u))return fail(res,401,'Inicia sesión para ver tus creaciones.');
     return reply(res,200,{items:[...db.images.filter(x=>x.userId===u.id).map(safeImage),...db.videos.filter(x=>x.userId===u.id).map(safeVideo)].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,80)});
   }
+  if(req.method==='GET'&&route.startsWith('/api/video/download/')){
+    if(!active(u))return fail(res,401,'Inicia sesión para descargar tu archivo.');
+    const video=db.videos.find(x=>x.id===route.slice('/api/video/download/'.length)&&(x.userId===u.id||u.role==='admin'));
+    if(!video)return fail(res,404,'No encontramos este archivo.');
+    return downloadVideo(res,video);
+  }
   if(req.method==='GET'&&route.startsWith('/api/video/status/')){
     if(!active(u))return fail(res,401,'Sesión requerida.');const video=db.videos.find(x=>x.id===route.slice(18)&&x.userId===u.id);if(!video)return fail(res,404,'No encontramos el video.');
     if(!['completed','failed','canceled','nsfw'].includes(video.status)&&video.remoteId){
       try{const data=await higgsfield('requests/'+encodeURIComponent(video.remoteId)+'/status','GET');const state=String(data.status||'').toLowerCase();if(['queued','in_progress','completed','failed','canceled','nsfw'].includes(state))video.status=state;
+        const rawProgress=typeof data.progress==='number'?data.progress:typeof data.progress?.percent==='number'?data.progress.percent:null;
+        if(Number.isFinite(rawProgress)&&rawProgress>=0&&rawProgress<=100&&rawProgress!==1)video.progress=Math.round(rawProgress<1?rawProgress*100:rawProgress);
         if(video.status==='completed'){const link=data?.video?.url||data?.output?.video?.url||data?.output?.url;if(typeof link!=='string'||!link.startsWith('https://')){video.status='failed';video.error='El proveedor no entregó un video reproducible.';}else video.url=link;}
         if(['failed','canceled','nsfw'].includes(video.status))video.error='La IA no pudo completar la generación.';
         save();
@@ -168,7 +217,7 @@ const server=http.createServer(async(req,res)=>{
     if(u.role!=='admin')return fail(res,403,'Solo el administrador.');
     const phone=String(body.phone||'').trim(),holder=String(body.holder||'').trim();const enabled=body.enabled===true;
     if((phone&&!/^9\d{8}$/.test(phone))||holder.length>85||enabled&&(!phone||holder.length<3))return fail(res,400,'Indica un número Yape válido (9 dígitos) y el titular antes de activar cobros.');
-    if(enabled&&!videoReady())return fail(res,409,'No actives cobros hasta que el motor de video y el almacenamiento permanente estén funcionando. Puedes guardar tu Yape con el cobro apagado.');
+    if(enabled&&(!videoReady()||!PERSISTENT_STORE))return fail(res,409,'No actives cobros hasta que el motor de video y el almacenamiento permanente estén funcionando. Puedes guardar tu Yape con el cobro apagado.');
     db.config={yapePhone:phone,yapeHolder:holder,billingEnabled:enabled,priceSoles:10};save();return reply(res,200,{settings:db.config});
   }
   if(route==='/api/admin/grant'){
@@ -211,12 +260,20 @@ const server=http.createServer(async(req,res)=>{
     if(!rateLimit('video:'+u.id,3,3600000))return fail(res,429,'Demasiadas generaciones consecutivas.');
     const threadId=threadFor(u,body.threadId)?.id||null;
     const video={id:crypto.randomUUID(),userId:u.id,createdAt:new Date().toISOString(),style,duration,aspect,threadId,prompt,generationMode,status:'submitting',remoteId:null,url:null,error:null};
-    if(reference){video.referenceId=crypto.randomUUID();video.referenceExt=reference.ext;video.referenceMime=reference.mime;fs.writeFileSync(path.join(MEDIA_PATH,'ref-'+video.referenceId+'.'+reference.ext),reference.bytes,{mode:0o600});}
+    // Las referencias no se exponen mediante URL pública ni se almacenan localmente.
     db.videos.push(video);save();
-    try{const endpoint=generationMode==='image'?'bytedance/seedance-2.5/image-to-video':'bytedance/seedance-2.5/text-to-video';
+    try{const endpoint=generationMode==='image'?VIDEO_MODEL+'/image-to-video':VIDEO_MODEL+'/text-to-video';
       const payload={prompt:makeBrief(prompt,style),duration,resolution:'720p',aspect_ratio:aspect,output_format:'mp4',generate_audio:body.sound===true};
-      if(reference)payload.image_url=PUBLIC_BASE+'/api/reference/'+video.referenceId;
+      if(reference)payload.image_url=await uploadReferenceToHiggsfield(reference);
       const data=await higgsfield(endpoint,'POST',payload);const rid=data.request_id;if(typeof rid!=='string'||rid.length<5)throw Error('El proveedor no confirmó el trabajo.');video.remoteId=rid;video.status='queued';save();if(threadId)addThreadMessage(u,threadId,{kind:'creation',mediaType:'video',creationId:video.id});return reply(res,202,{item:safeVideo(video)});}catch(e){video.status='failed';video.error=e.message;save();return fail(res,502,'No se pudo confirmar la generación: '+e.message);}
+  }
+  if(route==='/api/video/cancel'){
+    const v=db.videos.find(x=>x.id===String(body.videoId||'')&&x.userId===u.id);
+    if(!v)return fail(res,404,'No encontramos este video.');
+    if(!v.remoteId||!['queued','in_progress','canceling'].includes(v.status))return fail(res,409,'Este video ya no puede cancelarse.');
+    if(!rateLimit('cancel:'+u.id,10,3600000))return fail(res,429,'Demasiados intentos de cancelación.');
+    try{await higgsfield('requests/'+encodeURIComponent(v.remoteId)+'/cancel','POST',{});v.status='canceling';save();return reply(res,202,{item:safeVideo(v),message:'Cancelación solicitada al proveedor; pendiente de confirmación.'});}
+    catch(e){return fail(res,502,'No se pudo confirmar la cancelación: '+e.message);}
   }
   if(route==='/api/admin/block'){
     if(u.role!=='admin')return fail(res,403,'Solo el administrador puede gestionar usuarios.');const target=db.users.find(x=>x.id===body.userId);if(!target||target.role==='admin'||typeof body.block!=='boolean')return fail(res,400,'Usuario o acción incorrecta.');target.blocked=body.block;db.audit.push({time:new Date().toISOString(),actor:u.id,target:target.id,action:body.block?'block':'unblock'});if(db.audit.length>800)db.audit.shift();save();return reply(res,200,{user:safeUser(target)});
