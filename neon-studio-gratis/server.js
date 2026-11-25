@@ -25,7 +25,8 @@ const DOWNLOAD_MAX_BYTES = 450 * 1024 * 1024;
 const IMAGE_BUDGET = Math.max(0, Number(process.env.IMAGE_DAILY_BUDGET || 0));
 const VIDEO_SECONDS_BUDGET = Math.max(0, Number(process.env.VIDEO_DAILY_SECONDS_BUDGET || 0));
 const USER_IMAGE_DAILY_LIMIT = Math.max(1, Number(process.env.USER_IMAGE_DAILY_LIMIT || 4));
-const USER_VIDEO_DAILY_LIMIT = Math.max(1, Number(process.env.USER_VIDEO_DAILY_LIMIT || 1));
+// Quota enforced by the server for every account; reset at midnight Peru time.
+const USER_VIDEO_DAILY_LIMIT = 6;
 const imageReady = () => !!GEMINI_KEY && IMAGE_BUDGET > 0 && (PERSISTENT_STORE || !PRODUCTION);
 const videoReady = () => !!HF_KEY && VIDEO_SECONDS_BUDGET > 0 && (PERSISTENT_STORE || !PRODUCTION);
 const isReady = () => imageReady() || videoReady();
@@ -43,11 +44,11 @@ if ((ADMIN_EMAIL && ADMIN_PASSWORD.length < 14) || (ADMIN_PASSWORD && !ADMIN_EMA
 if (PRODUCTION && isReady() && (!process.env.SESSION_SECRET || !PERSISTENT_STORE)) throw Error('Paid AI API use in production requires SESSION_SECRET and PERSISTENT_STORE');
 fs.mkdirSync(path.dirname(STATE_PATH), {recursive: true});
 fs.mkdirSync(MEDIA_PATH, {recursive: true});
-let db = {users:[],images:[],videos:[],audit:[],threads:[],payments:[],config:{yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:20}};
+let db = {users:[],images:[],videos:[],audit:[],threads:[],payments:[],config:{yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:25}};
 try {db = JSON.parse(fs.readFileSync(STATE_PATH,'utf8'));} catch(e) {if(e.code!=='ENOENT')throw e;}
 for(const field of ['users','images','videos','audit','threads','payments']) if (!Array.isArray(db[field])) db[field]=[];
-if(!db.config||typeof db.config!=='object')db.config={yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:20};
-db.config={yapePhone:String(db.config.yapePhone||''),yapeHolder:String(db.config.yapeHolder||''),billingEnabled:db.config.billingEnabled===true,priceSoles:20};
+if(!db.config||typeof db.config!=='object')db.config={yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:25};
+db.config={yapePhone:String(db.config.yapePhone||''),yapeHolder:String(db.config.yapeHolder||''),billingEnabled:db.config.billingEnabled===true,priceSoles:25};
 function save(){const tmp=STATE_PATH+'.'+process.pid+'.tmp';fs.writeFileSync(tmp,JSON.stringify(db),{mode:0o600});fs.renameSync(tmp,STATE_PATH);}
 function hashPassword(p,salt=crypto.randomBytes(16).toString('hex')){return salt+':'+crypto.scryptSync(p,salt,64).toString('hex');}
 function checkPassword(p,h){try{const [salt,bytes]=h.split(':');const b=Buffer.from(bytes,'hex');return crypto.timingSafeEqual(b,crypto.scryptSync(p,salt,b.length));}catch{return false;}}
@@ -76,6 +77,13 @@ function sameOrigin(req){if(!req.headers.origin)return true;try{return new URL(r
 const limiter=new Map();
 function rateLimit(key,max,windowMs){const now=Date.now();const a=(limiter.get(key)||[]).filter(x=>x>now-windowMs);if(a.length>=max)return false;a.push(now);limiter.set(key,a);if(limiter.size>5000)limiter.clear();return true;}
 function utcDay(){return new Date().toISOString().slice(0,10);}
+const limaDateFormat = new Intl.DateTimeFormat('en-US',{timeZone:'America/Lima',year:'numeric',month:'2-digit',day:'2-digit'});
+function limaDay(time=Date.now()){const parts=Object.fromEntries(limaDateFormat.formatToParts(new Date(time)).map(x=>[x.type,x.value]));return parts.year+'-'+parts.month+'-'+parts.day;}
+function videoUsesToday(userId){
+  const day=limaDay();
+  return db.videos.filter(v=>v.userId===userId&&v.createdAt&&limaDay(v.createdAt)===day&&!['failed','canceled','nsfw'].includes(v.status)).length;
+}
+function videoQuota(userId){const used=videoUsesToday(userId);return {dailyLimit:USER_VIDEO_DAILY_LIMIT,used,remaining:Math.max(0,USER_VIDEO_DAILY_LIMIT-used),timezone:'America/Lima'};}
 function countToday(collection,pred=()=>true){const day=utcDay();return collection.filter(x=>x.createdAt?.startsWith(day)&&pred(x)).length;}
 const makeBrief=(prompt,style)=>`${prompt}\nArt direction: ${STYLES[style]}\nPreserve intended appearance and spatial continuity; do not add captions, logos, or letters.`;
 function safeImage(image){return {id:image.id,type:'image',style:image.style,createdAt:image.createdAt,status:image.status==='processing'?'processing':'completed',url:image.status==='completed'?'/api/images/'+image.id:null,aspect:image.aspect,threadId:image.threadId||null,prompt:image.prompt||''};}
@@ -143,10 +151,10 @@ const server=http.createServer(async(req,res)=>{
   const u=userFrom(req);
   if(req.method==='GET'&&!route.startsWith('/api/'))return staticFile(res,route);
   if(req.method==='GET'&&route==='/api/status')return reply(res,200,{ok:true,freeForVisitors:true,configured:imageReady()||videoReady(),imageReady:imageReady(),videoReady:videoReady(),storagePersistent:PERSISTENT_STORE,mode:PRODUCTION?'production':'development'});
-  if(req.method==='GET'&&route==='/api/me')return reply(res,200,{user:safeUser(u),imageReady:imageReady(),videoReady:videoReady(),freeForVisitors:true});
+  if(req.method==='GET'&&route==='/api/me')return reply(res,200,{user:safeUser(u),videoQuota:u?videoQuota(u.id):null,imageReady:imageReady(),videoReady:videoReady(),freeForVisitors:true});
   if(req.method==='GET'&&route.startsWith('/api/images/'))return serveImage(res,route.slice('/api/images/'.length),u);
   // Las imágenes privadas se suben directamente al almacenamiento firmado de Higgsfield; no hay ruta pública de referencias.
-  if(req.method==='GET'&&route==='/api/public')return reply(res,200,{priceSoles:20,billingEnabled:false,checkoutReady:false,paymentMethod:'yape_checkout_pending',imageReady:imageReady(),videoReady:videoReady(),maxSingleClip:30,requestedMaxDuration:120,storagePersistent:PERSISTENT_STORE});
+  if(req.method==='GET'&&route==='/api/public')return reply(res,200,{priceSoles:25,dailyVideoLimit:USER_VIDEO_DAILY_LIMIT,billingEnabled:false,checkoutReady:false,paymentMethod:'yape_checkout_pending',imageReady:imageReady(),videoReady:videoReady(),maxSingleClip:30,requestedMaxDuration:120,storagePersistent:PERSISTENT_STORE});
   if(req.method==='GET'&&route==='/api/threads'){if(!active(u))return fail(res,401,'Inicia sesión.');return reply(res,200,{items:db.threads.filter(t=>t.userId===u.id).map(t=>({id:t.id,title:t.title,updatedAt:t.updatedAt,createdAt:t.createdAt})).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,100)});}
   if(req.method==='GET'&&route.startsWith('/api/threads/')){if(!active(u))return fail(res,401,'Inicia sesión.');const t=threadFor(u,route.slice('/api/threads/'.length));if(!t)return fail(res,404,'Conversación no encontrada.');return reply(res,200,{thread:t});}
   if(req.method==='GET'&&route==='/api/payments'){if(!active(u))return fail(res,401,'Inicia sesión.');return reply(res,200,{payments:db.payments.filter(p=>p.userId===u.id).map(safePayment)});}
@@ -212,7 +220,7 @@ const server=http.createServer(async(req,res)=>{
     const phone=String(body.phone||'').trim(),holder=String(body.holder||'').trim();const enabled=body.enabled===true;
     if((phone&&!/^9\d{8}$/.test(phone))||holder.length>85||enabled&&(!phone||holder.length<3))return fail(res,400,'Indica un número Yape válido (9 dígitos) y el titular antes de activar cobros.');
     if(enabled)return fail(res,409,'Para proteger tu número personal, se necesita integrar una pasarela de comercio como Culqi o Mercado Pago. No se pueden activar transferencias manuales.');
-    db.config={yapePhone:phone,yapeHolder:holder,billingEnabled:false,priceSoles:20};save();return reply(res,200,{settings:db.config});
+    db.config={yapePhone:phone,yapeHolder:holder,billingEnabled:false,priceSoles:25};save();return reply(res,200,{settings:db.config});
   }
   if(route==='/api/admin/grant'){
     if(u.role!=='admin')return fail(res,403,'Solo el administrador.');
@@ -249,9 +257,9 @@ const server=http.createServer(async(req,res)=>{
     if(generationMode==='image'&&!reference)return fail(res,400,'Debes adjuntar una imagen JPG, PNG o WebP de hasta 4,5 MB.');
     const todayVideos=db.videos.filter(v=>v.createdAt.startsWith(utcDay())&&v.status!=='failed'&&v.status!=='canceled');
     if(todayVideos.reduce((n,j)=>n+j.duration,0)+duration>VIDEO_SECONDS_BUDGET)return fail(res,429,'Se agotó el presupuesto de videos de hoy.');
-    if(todayVideos.filter(v=>v.userId===u.id).length>=USER_VIDEO_DAILY_LIMIT)return fail(res,429,'Alcanzaste el límite de uso responsable de videos por hoy.');
+    if(videoUsesToday(u.id)>=USER_VIDEO_DAILY_LIMIT)return fail(res,429,'Perdón, alcanzaste tus 6 videos diarios. El plan necesita descansar un rato. Podrás volver a generar mañana, hora de Perú.');
     if(db.videos.some(v=>v.userId===u.id&&['queued','submitting','in_progress'].includes(v.status)))return fail(res,409,'Ya tienes un video en generación.');
-    if(!rateLimit('video:'+u.id,3,3600000))return fail(res,429,'Demasiadas generaciones consecutivas.');
+    if(!rateLimit('video:'+u.id,USER_VIDEO_DAILY_LIMIT,3600000))return fail(res,429,'Has enviado demasiadas generaciones seguidas. Vuelve a intentarlo más tarde.');
     const threadId=threadFor(u,body.threadId)?.id||null;
     const video={id:crypto.randomUUID(),userId:u.id,createdAt:new Date().toISOString(),style,duration,aspect,threadId,prompt,generationMode,status:'submitting',remoteId:null,url:null,error:null};
     // Las referencias no se exponen mediante URL pública ni se almacenan localmente.
