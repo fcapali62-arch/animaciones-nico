@@ -55,7 +55,8 @@ if(ADMIN_EMAIL && ADMIN_PASSWORD && !db.users.some(u=>u.role==='admin')){
   db.users.push({id:crypto.randomUUID(),email:ADMIN_EMAIL,password:hashPassword(ADMIN_PASSWORD),role:'admin',blocked:false,createdAt:new Date().toISOString()});save();
 }
 const active = u => !!u && !u.blocked;
-const member = u => !!u&&(u.role==='admin'||!db.config.billingEnabled||Date.parse(u.paidUntil||'')>Date.now()||Date.parse(u.grantUntil||'')>Date.now());
+// Checkout de comercio no conectado: acceso temporal sin cobrar a visitantes.
+const member = u => !!u;
 const safeUser = u => u ? {id:u.id,email:u.email,role:u.role,active:active(u),member:member(u),paidUntil:u.paidUntil||null,grantUntil:u.grantUntil||null,createdAt:u.createdAt}:null;
 const safePayment=p=>({id:p.id,userId:p.userId,email:db.users.find(x=>x.id===p.userId)?.email||'Usuario',reference:p.reference,status:p.status,createdAt:p.createdAt,reviewedAt:p.reviewedAt||null,amount:10});
 function threadFor(user,id){return db.threads.find(t=>t.id===id&&t.userId===user?.id);}
@@ -141,11 +142,11 @@ const server=http.createServer(async(req,res)=>{
   const route=new URL(req.url,'http://local').pathname;
   const u=userFrom(req);
   if(req.method==='GET'&&!route.startsWith('/api/'))return staticFile(res,route);
-  if(req.method==='GET'&&route==='/api/status')return reply(res,200,{ok:true,freeForVisitors:!db.config.billingEnabled,configured:imageReady()||videoReady(),imageReady:imageReady(),videoReady:videoReady(),storagePersistent:PERSISTENT_STORE,mode:PRODUCTION?'production':'development'});
-  if(req.method==='GET'&&route==='/api/me')return reply(res,200,{user:safeUser(u),imageReady:imageReady(),videoReady:videoReady(),freeForVisitors:!db.config.billingEnabled});
+  if(req.method==='GET'&&route==='/api/status')return reply(res,200,{ok:true,freeForVisitors:true,configured:imageReady()||videoReady(),imageReady:imageReady(),videoReady:videoReady(),storagePersistent:PERSISTENT_STORE,mode:PRODUCTION?'production':'development'});
+  if(req.method==='GET'&&route==='/api/me')return reply(res,200,{user:safeUser(u),imageReady:imageReady(),videoReady:videoReady(),freeForVisitors:true});
   if(req.method==='GET'&&route.startsWith('/api/images/'))return serveImage(res,route.slice('/api/images/'.length),u);
   // Las imágenes privadas se suben directamente al almacenamiento firmado de Higgsfield; no hay ruta pública de referencias.
-  if(req.method==='GET'&&route==='/api/public')return reply(res,200,{priceSoles:10,billingEnabled:db.config.billingEnabled&&!!db.config.yapePhone,yapePhone:db.config.billingEnabled?db.config.yapePhone:'',yapeHolder:db.config.billingEnabled?db.config.yapeHolder:'',imageReady:imageReady(),videoReady:videoReady(),maxSingleClip:30,requestedMaxDuration:120,storagePersistent:PERSISTENT_STORE});
+  if(req.method==='GET'&&route==='/api/public')return reply(res,200,{priceSoles:10,billingEnabled:false,checkoutReady:false,paymentMethod:'yape_checkout_pending',imageReady:imageReady(),videoReady:videoReady(),maxSingleClip:30,requestedMaxDuration:120,storagePersistent:PERSISTENT_STORE});
   if(req.method==='GET'&&route==='/api/threads'){if(!active(u))return fail(res,401,'Inicia sesión.');return reply(res,200,{items:db.threads.filter(t=>t.userId===u.id).map(t=>({id:t.id,title:t.title,updatedAt:t.updatedAt,createdAt:t.createdAt})).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,100)});}
   if(req.method==='GET'&&route.startsWith('/api/threads/')){if(!active(u))return fail(res,401,'Inicia sesión.');const t=threadFor(u,route.slice('/api/threads/'.length));if(!t)return fail(res,404,'Conversación no encontrada.');return reply(res,200,{thread:t});}
   if(req.method==='GET'&&route==='/api/payments'){if(!active(u))return fail(res,401,'Inicia sesión.');return reply(res,200,{payments:db.payments.filter(p=>p.userId===u.id).map(safePayment)});}
@@ -205,20 +206,13 @@ const server=http.createServer(async(req,res)=>{
     const t=threadFor(u,String(body.threadId||''));if(!t)return fail(res,404,'Conversación no encontrada.');
     db.threads=db.threads.filter(x=>x.id!==t.id);save();return reply(res,200,{ok:true});
   }
-  if(route==='/api/payments/request'){
-    if(!db.config.billingEnabled||!db.config.yapePhone)return fail(res,503,'El propietario todavía no ha activado pagos por Yape. No realices ningún depósito.');
-    const reference=String(body.reference||'').replace(/\s+/g,' ').trim();
-    if(reference.length<3||reference.length>50||!/^[-\w\s]+$/.test(reference))return fail(res,400,'Indica el código de operación recibido en Yape.');
-    if(db.payments.some(p=>p.reference.toLowerCase()===reference.toLowerCase()&&p.status!=='rejected'))return fail(res,409,'Este código de operación ya fue registrado.');
-    if(db.payments.filter(p=>p.userId===u.id&&p.status==='pending').length>=2)return fail(res,429,'Ya tienes solicitudes pendientes.');
-    const p={id:crypto.randomUUID(),userId:u.id,reference,status:'pending',amount:10,createdAt:new Date().toISOString()};db.payments.push(p);save();return reply(res,201,{payment:safePayment(p)});
-  }
-  if(route==='/api/admin/yape'){
+  if(route==='/api/payments/request')return fail(res,503,'Aún no hay pasarela de pago segura. No realices transferencias ni ingreses códigos de operación.');
+   if(route==='/api/admin/yape'){
     if(u.role!=='admin')return fail(res,403,'Solo el administrador.');
     const phone=String(body.phone||'').trim(),holder=String(body.holder||'').trim();const enabled=body.enabled===true;
     if((phone&&!/^9\d{8}$/.test(phone))||holder.length>85||enabled&&(!phone||holder.length<3))return fail(res,400,'Indica un número Yape válido (9 dígitos) y el titular antes de activar cobros.');
-    if(enabled&&(!videoReady()||!PERSISTENT_STORE))return fail(res,409,'No actives cobros hasta que el motor de video y el almacenamiento permanente estén funcionando. Puedes guardar tu Yape con el cobro apagado.');
-    db.config={yapePhone:phone,yapeHolder:holder,billingEnabled:enabled,priceSoles:10};save();return reply(res,200,{settings:db.config});
+    if(enabled)return fail(res,409,'Para proteger tu número personal, se necesita integrar una pasarela de comercio como Culqi o Mercado Pago. No se pueden activar transferencias manuales.');
+    db.config={yapePhone:phone,yapeHolder:holder,billingEnabled:false,priceSoles:10};save();return reply(res,200,{settings:db.config});
   }
   if(route==='/api/admin/grant'){
     if(u.role!=='admin')return fail(res,403,'Solo el administrador.');
