@@ -43,11 +43,11 @@ if ((ADMIN_EMAIL && ADMIN_PASSWORD.length < 14) || (ADMIN_PASSWORD && !ADMIN_EMA
 if (PRODUCTION && isReady() && (!process.env.SESSION_SECRET || !PERSISTENT_STORE)) throw Error('Paid AI API use in production requires SESSION_SECRET and PERSISTENT_STORE');
 fs.mkdirSync(path.dirname(STATE_PATH), {recursive: true});
 fs.mkdirSync(MEDIA_PATH, {recursive: true});
-let db = {users:[],images:[],videos:[],audit:[],threads:[],payments:[],config:{yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:10}};
+let db = {users:[],images:[],videos:[],audit:[],threads:[],payments:[],config:{yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:20}};
 try {db = JSON.parse(fs.readFileSync(STATE_PATH,'utf8'));} catch(e) {if(e.code!=='ENOENT')throw e;}
 for(const field of ['users','images','videos','audit','threads','payments']) if (!Array.isArray(db[field])) db[field]=[];
-if(!db.config||typeof db.config!=='object')db.config={yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:10};
-db.config={yapePhone:String(db.config.yapePhone||''),yapeHolder:String(db.config.yapeHolder||''),billingEnabled:db.config.billingEnabled===true,priceSoles:10};
+if(!db.config||typeof db.config!=='object')db.config={yapePhone:'',yapeHolder:'',billingEnabled:false,priceSoles:20};
+db.config={yapePhone:String(db.config.yapePhone||''),yapeHolder:String(db.config.yapeHolder||''),billingEnabled:db.config.billingEnabled===true,priceSoles:20};
 function save(){const tmp=STATE_PATH+'.'+process.pid+'.tmp';fs.writeFileSync(tmp,JSON.stringify(db),{mode:0o600});fs.renameSync(tmp,STATE_PATH);}
 function hashPassword(p,salt=crypto.randomBytes(16).toString('hex')){return salt+':'+crypto.scryptSync(p,salt,64).toString('hex');}
 function checkPassword(p,h){try{const [salt,bytes]=h.split(':');const b=Buffer.from(bytes,'hex');return crypto.timingSafeEqual(b,crypto.scryptSync(p,salt,b.length));}catch{return false;}}
@@ -58,7 +58,7 @@ const active = u => !!u && !u.blocked;
 // Checkout de comercio no conectado: acceso temporal sin cobrar a visitantes.
 const member = u => !!u;
 const safeUser = u => u ? {id:u.id,email:u.email,role:u.role,active:active(u),member:member(u),paidUntil:u.paidUntil||null,grantUntil:u.grantUntil||null,createdAt:u.createdAt}:null;
-const safePayment=p=>({id:p.id,userId:p.userId,email:db.users.find(x=>x.id===p.userId)?.email||'Usuario',reference:p.reference,status:p.status,createdAt:p.createdAt,reviewedAt:p.reviewedAt||null,amount:10});
+const safePayment=p=>({id:p.id,userId:p.userId,email:db.users.find(x=>x.id===p.userId)?.email||'Usuario',reference:p.reference,status:p.status,createdAt:p.createdAt,reviewedAt:p.reviewedAt||null,amount:Number.isFinite(Number(p.amount))&&Number(p.amount)>0?Number(p.amount):10});
 function threadFor(user,id){return db.threads.find(t=>t.id===id&&t.userId===user?.id);}
 function addThreadMessage(user,threadId,message){const t=threadFor(user,threadId);if(!t)return; t.messages.push({...message,id:crypto.randomUUID(),createdAt:new Date().toISOString()});t.messages=t.messages.slice(-100);t.updatedAt=new Date().toISOString();save();}
 function accessGuard(res,u){if(!member(u)){fail(res,402,'Se requiere una membresía de 30 días o acceso gratuito concedido por el administrador.');return false;}return true;}
@@ -146,7 +146,7 @@ const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&route==='/api/me')return reply(res,200,{user:safeUser(u),imageReady:imageReady(),videoReady:videoReady(),freeForVisitors:true});
   if(req.method==='GET'&&route.startsWith('/api/images/'))return serveImage(res,route.slice('/api/images/'.length),u);
   // Las imágenes privadas se suben directamente al almacenamiento firmado de Higgsfield; no hay ruta pública de referencias.
-  if(req.method==='GET'&&route==='/api/public')return reply(res,200,{priceSoles:10,billingEnabled:false,checkoutReady:false,paymentMethod:'yape_checkout_pending',imageReady:imageReady(),videoReady:videoReady(),maxSingleClip:30,requestedMaxDuration:120,storagePersistent:PERSISTENT_STORE});
+  if(req.method==='GET'&&route==='/api/public')return reply(res,200,{priceSoles:20,billingEnabled:false,checkoutReady:false,paymentMethod:'yape_checkout_pending',imageReady:imageReady(),videoReady:videoReady(),maxSingleClip:30,requestedMaxDuration:120,storagePersistent:PERSISTENT_STORE});
   if(req.method==='GET'&&route==='/api/threads'){if(!active(u))return fail(res,401,'Inicia sesión.');return reply(res,200,{items:db.threads.filter(t=>t.userId===u.id).map(t=>({id:t.id,title:t.title,updatedAt:t.updatedAt,createdAt:t.createdAt})).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,100)});}
   if(req.method==='GET'&&route.startsWith('/api/threads/')){if(!active(u))return fail(res,401,'Inicia sesión.');const t=threadFor(u,route.slice('/api/threads/'.length));if(!t)return fail(res,404,'Conversación no encontrada.');return reply(res,200,{thread:t});}
   if(req.method==='GET'&&route==='/api/payments'){if(!active(u))return fail(res,401,'Inicia sesión.');return reply(res,200,{payments:db.payments.filter(p=>p.userId===u.id).map(safePayment)});}
@@ -175,7 +175,7 @@ const server=http.createServer(async(req,res)=>{
   }
   if(req.method==='GET'&&route==='/api/admin'){
     if(u?.role!=='admin')return fail(res,403,'Acceso exclusivo de administración.');
-    return reply(res,200,{users:db.users.map(safeUser),payments:db.payments.map(safePayment).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)),paymentSettings:db.config,stats:{users:db.users.filter(x=>x.role!=='admin').length,totalImages:db.images.length,totalVideos:db.videos.filter(v=>v.status==='completed').length,videosInProgress:db.videos.filter(v=>['queued','submitting','in_progress'].includes(v.status)).length,totalThreads:db.threads.length,imagesToday:countToday(db.images),videoSecondsToday:db.videos.filter(x=>x.createdAt?.startsWith(utcDay())&&x.status!=='failed').reduce((n,j)=>n+j.duration,0),approvedRevenue:db.payments.filter(p=>p.status==='approved').length*10},engine:{imageReady:imageReady(),videoReady:videoReady(),imageDailyBudget:IMAGE_BUDGET,videoSecondsDailyBudget:VIDEO_SECONDS_BUDGET,storagePersistent:PERSISTENT_STORE}});
+    return reply(res,200,{users:db.users.map(safeUser),payments:db.payments.map(safePayment).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)),paymentSettings:db.config,stats:{users:db.users.filter(x=>x.role!=='admin').length,totalImages:db.images.length,totalVideos:db.videos.filter(v=>v.status==='completed').length,videosInProgress:db.videos.filter(v=>['queued','submitting','in_progress'].includes(v.status)).length,totalThreads:db.threads.length,imagesToday:countToday(db.images),videoSecondsToday:db.videos.filter(x=>x.createdAt?.startsWith(utcDay())&&x.status!=='failed').reduce((n,j)=>n+j.duration,0),approvedRevenue:db.payments.filter(p=>p.status==='approved').reduce((total,p)=>total+(Number(p.amount)||10),0)},engine:{imageReady:imageReady(),videoReady:videoReady(),imageDailyBudget:IMAGE_BUDGET,videoSecondsDailyBudget:VIDEO_SECONDS_BUDGET,storagePersistent:PERSISTENT_STORE}});
   }
   if(req.method!=='POST'||!route.startsWith('/api/'))return fail(res,404,'Ruta no disponible');
   if(!sameOrigin(req))return fail(res,403,'Origen no autorizado');
@@ -212,7 +212,7 @@ const server=http.createServer(async(req,res)=>{
     const phone=String(body.phone||'').trim(),holder=String(body.holder||'').trim();const enabled=body.enabled===true;
     if((phone&&!/^9\d{8}$/.test(phone))||holder.length>85||enabled&&(!phone||holder.length<3))return fail(res,400,'Indica un número Yape válido (9 dígitos) y el titular antes de activar cobros.');
     if(enabled)return fail(res,409,'Para proteger tu número personal, se necesita integrar una pasarela de comercio como Culqi o Mercado Pago. No se pueden activar transferencias manuales.');
-    db.config={yapePhone:phone,yapeHolder:holder,billingEnabled:false,priceSoles:10};save();return reply(res,200,{settings:db.config});
+    db.config={yapePhone:phone,yapeHolder:holder,billingEnabled:false,priceSoles:20};save();return reply(res,200,{settings:db.config});
   }
   if(route==='/api/admin/grant'){
     if(u.role!=='admin')return fail(res,403,'Solo el administrador.');
