@@ -27,7 +27,7 @@ const TABLE_LIKES = ENV.APPWRITE_GUSTOS_TABLE_ID || "";
 const TABLE_CHAT = ENV.APPWRITE_MENSAJES_TABLE_ID || "";
 const BUCKET = ENV.APPWRITE_BUCKET_ID || "";
 const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD || "";
-const MAX_FILE_MB = 25;
+const MAX_FILE_MB = 100;
 const MAX_UPLOAD = MAX_FILE_MB * 1024 * 1024;
 const MAX_BODY = MAX_UPLOAD + 512 * 1024;
 const ALLOWED = new Map([
@@ -2108,7 +2108,7 @@ const PAGE = [
   "      box.style.display='block';",
   "      const bytes=(file.size/1024/1024).toFixed(1);",
   "      box.append(elt('p','',`${file.name} · ${bytes} MB`));",
-  "      if (file.size>25*1024*1024) {box.append(elt('p','status error','Este archivo supera el límite de 25 MB.'));return;}",
+  "      if (file.size>100*1024*1024) {box.append(elt('p','status error','Este archivo supera el límite de 100 MB.'));return;}",
   "      state.lastPreview=URL.createObjectURL(file);",
   "      const node=document.createElement(file.type.startsWith('image/')?'img':'video');",
   "      node.src=state.lastPreview;",
@@ -2126,7 +2126,7 @@ const PAGE = [
   "        status('#uploadStatus','Completa todo antes de enviar.','error');return;",
   "      }",
   "      if (titulo.length < 3) {status('#uploadStatus','El título debe tener al menos 3 caracteres.','error');return;}",
-  "      if (file.size > 25*1024*1024) {status('#uploadStatus','El archivo supera los 25 MB.','error');return;}",
+  "      if (file.size > 100*1024*1024) {status('#uploadStatus','El archivo supera los 100 MB.','error');return;}",
   "      if (!['video/mp4','video/webm','image/png','image/jpeg','image/webp','image/gif'].includes(file.type)) {",
   "        status('#uploadStatus','Solo se permiten imágenes JPG, PNG, WebP, GIF o videos MP4, WebM.','error');return;",
   "      }",
