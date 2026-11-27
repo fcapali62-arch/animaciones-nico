@@ -42,7 +42,7 @@ async function cloudAction(action, params, buffer, type) {
   form.append("api_key",CLOUD_KEY);
   form.append("signature",cloudSignature(signed));
   if(buffer) form.append("file",new Blob([buffer],{type}),"nico."+ALLOWED.get(type));
-  const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/video/"+action,{method:"POST",body:form});
+  const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/video/"+action,{method:"POST",body:form,signal:AbortSignal.timeout(30000)});
   const data=await response.json();
   if(!response.ok) abort(502,"Cloudinary no pudo procesar el video. Revisa las credenciales y los límites del plan.");
   return data;
@@ -53,6 +53,44 @@ async function cloudUpload(buffer,type) {
     await cloudAction("upload",{public_id:id,type:"authenticated",overwrite:"false"},buffer,type);
     return id;
   } catch(e) { try { await cloudAction("destroy",{public_id:id,type:"authenticated"}); } catch {} throw e; }
+}
+async function cloudUploadStream(req, type, size) {
+  if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) abort(503,"Falta configurar Cloudinary");
+  const id="cloudv_"+crypto.randomUUID().replaceAll("-","")+"_"+ALLOWED.get(type);
+  const params={public_id:id,type:"authenticated",overwrite:"false",timestamp:Math.floor(Date.now()/1000)};
+  const fields={...params,api_key:CLOUD_KEY,signature:cloudSignature(params)};
+  const boundary="nico"+crypto.randomBytes(18).toString("hex");
+  const prefix=Buffer.from(Object.entries(fields).map(([k,v])=>"--"+boundary+"\r\nContent-Disposition: form-data; name=\""+k+"\"\r\n\r\n"+v+"\r\n").join("")+"--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"nico."+ALLOWED.get(type)+"\"\r\nContent-Type: "+type+"\r\n\r\n");
+  const suffix=Buffer.from("\r\n--"+boundary+"--\r\n");
+  async function* body() {
+    yield prefix;
+    let received=0;
+    for await(const chunk of req) {
+      received+=chunk.length;
+      if(received>size) throw new Error("Tamaño incorrecto");
+      yield chunk;
+    }
+    if(received!==size) throw new Error("Video incompleto");
+    yield suffix;
+  }
+  try {
+    const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/video/upload",{
+      method:"POST",headers:{"Content-Type":"multipart/form-data; boundary="+boundary,"Content-Length":String(prefix.length+size+suffix.length)},
+      body:body(),duplex:"half",signal:AbortSignal.timeout(300000)
+    });
+    const result=await response.json();
+    if(!response.ok) {
+      console.warn("Cloudinary upload status",response.status);
+      abort(502,response.status===401?"Cloudinary rechazó las credenciales. Revisa la clave API y la clave secreta.":"Cloudinary rechazó el archivo ("+response.status+"). Revisa el límite del plan.");
+    }
+    if(result.public_id!==id) abort(502,"Cloudinary devolvió una referencia inesperada");
+    return id;
+  } catch(e) {
+    console.warn("Cloudinary streaming:",e.name,e.status||"",e.cause?.code||"");
+    try { await cloudAction("destroy",{public_id:id,type:"authenticated"}); } catch {}
+    if(e.status) throw e;
+    abort(502,"No se completó la transferencia a Cloudinary. Intenta nuevamente.");
+  }
 }
 function cloudDelivery(id) {
   const ext=cloudRef(id)[1];
@@ -2179,7 +2217,8 @@ const PAGE = [
   "      form.set('titulo',titulo);form.set('descripcion',descripcion);",
   "      form.set('archivo',file);form.set('nota',nota);",
   "      try {",
-  "        const data=await api('/api/posts/upload',{method:'POST',body:form});",
+  "        const large=file.type.startsWith('video/')&&file.size>25*1024*1024;",
+  "        const data=await api('/api/posts/upload',large?{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream','X-Nico-Media':encodeURIComponent(JSON.stringify({titulo,descripcion,nota,size:file.size,type:file.type}))}}:{method:'POST',body:form});",
   "        qs('#uploadForm').reset();fileChosen();",
   "        status('#uploadStatus',data.message,'ok');",
   "      } catch(e) {status('#uploadStatus',safeMessage(e),'error');}",
@@ -2493,14 +2532,27 @@ if (isGET && path === "/condiciones") {
     let fileId = null;
     let postId = null;
     try {
-      const { form, file } = await getForm(req);
-      const titulo = text(form.get("titulo"),120);
-      const descripcion = text(form.get("descripcion"),600);
-      const nota = text(form.get("nota"),300);
-      if (!titulo || !descripcion || !nota || !file) abort(400,"Completa todo antes de enviar.");
-      if (titulo.length < 3) abort(400,"El título necesita al menos 3 caracteres");
-      const kind = file.type.startsWith("image/") ? "image" : "video";
-      fileId = await sendFile(Buffer.from(await file.arrayBuffer()),file.type);
+      let titulo,descripcion,nota,kind;
+      if(req.headers["content-type"]==="application/octet-stream") {
+        let meta;
+        try { meta=JSON.parse(decodeURIComponent(String(req.headers["x-nico-media"]||""))); } catch { abort(400,"Datos del video incorrectos"); }
+        titulo=text(meta.titulo,120);descripcion=text(meta.descripcion,600);nota=text(meta.nota,300);
+        if(titulo.length<3||!descripcion||!nota) abort(400,"Completa todo antes de enviar.");
+        const size=Number(meta.size);
+        if(!Number.isSafeInteger(size)||size<=0||size>MAX_UPLOAD) abort(413,"Máximo 100 MB");
+        const declared=req.headers["content-length"];
+        if(declared!==undefined && Number(declared)!==size) abort(400,"Tamaño de video incorrecto");
+        if(!["video/mp4","video/webm"].includes(meta.type)) abort(400,"Selecciona un video MP4 o WebM");
+        kind="video";
+        fileId=await cloudUploadStream(req,meta.type,size);
+      } else {
+        const { form, file } = await getForm(req);
+        titulo=text(form.get("titulo"),120);descripcion=text(form.get("descripcion"),600);nota=text(form.get("nota"),300);
+        if(!titulo||!descripcion||!nota||!file) abort(400,"Completa todo antes de enviar.");
+        if(titulo.length<3) abort(400,"El título necesita al menos 3 caracteres");
+        kind=file.type.startsWith("image/")?"image":"video";
+        fileId=await sendFile(Buffer.from(await file.arrayBuffer()),file.type);
+      }
       const post = await addRow(TABLE_POSTS, {
         titulo,descripcion,nombra:user?.nombre||"Visitante",usuario_id:user?.id||"",
         video_url:`${kind}:${fileId}`,estado:"pendiente",
