@@ -27,6 +27,39 @@ const TABLE_LIKES = ENV.APPWRITE_GUSTOS_TABLE_ID || "";
 const TABLE_CHAT = ENV.APPWRITE_MENSAJES_TABLE_ID || "";
 const BUCKET = ENV.APPWRITE_BUCKET_ID || "";
 const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD || "";
+const CLOUD_NAME = ENV.CLOUDINARY_CLOUD_NAME || "";
+const CLOUD_KEY = ENV.CLOUDINARY_API_KEY || "";
+const CLOUD_SECRET = ENV.CLOUDINARY_API_SECRET || "";
+function cloudSignature(params) {
+  return crypto.createHash("sha1").update(Object.keys(params).sort().map(k=>k+"="+params[k]).join("&")+CLOUD_SECRET).digest("hex");
+}
+function cloudRef(id) { return /^cloudv_[a-f0-9]{32}_(mp4|webm)$/.exec(id); }
+async function cloudAction(action, params, buffer, type) {
+  if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) abort(503,"Falta configurar Cloudinary");
+  const signed = {...params,timestamp:Math.floor(Date.now()/1000)};
+  const form = new FormData();
+  for(const [k,v] of Object.entries(signed)) form.append(k,String(v));
+  form.append("api_key",CLOUD_KEY);
+  form.append("signature",cloudSignature(signed));
+  if(buffer) form.append("file",new Blob([buffer],{type}),"nico."+ALLOWED.get(type));
+  const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/video/"+action,{method:"POST",body:form});
+  const data=await response.json();
+  if(!response.ok) abort(502,"Cloudinary no pudo procesar el video. Revisa las credenciales y los límites del plan.");
+  return data;
+}
+async function cloudUpload(buffer,type) {
+  const id="cloudv_"+crypto.randomUUID().replaceAll("-","")+"_"+ALLOWED.get(type);
+  try {
+    await cloudAction("upload",{public_id:id,type:"authenticated",overwrite:"false"},buffer,type);
+    return id;
+  } catch(e) { try { await cloudAction("destroy",{public_id:id,type:"authenticated"}); } catch {} throw e; }
+}
+function cloudDelivery(id) {
+  const ext=cloudRef(id)[1];
+  const path=id+"."+ext;
+  const sig=crypto.createHash("sha1").update(path+CLOUD_SECRET).digest("base64url").slice(0,8);
+  return "https://res.cloudinary.com/"+encodeURIComponent(CLOUD_NAME)+"/video/authenticated/s--"+sig+"--/"+path;
+}
 const MAX_FILE_MB = 100;
 const MAX_UPLOAD = MAX_FILE_MB * 1024 * 1024;
 const MAX_BODY = MAX_UPLOAD + 512 * 1024;
@@ -153,6 +186,7 @@ async function deleteRow(table, id) {
   return fetchRemote(rowsPath(table, id), { method: "DELETE" });
 }
 async function sendFile(buffer, type) {
+  if(type.startsWith("video/") && buffer.length>25*1024*1024) return cloudUpload(buffer,type);
   const fileId = crypto.randomUUID().replaceAll("-", "");
   const path = `/storage/buckets/${encodeURIComponent(BUCKET)}/files`;
   const CHUNK = 5 * 1024 * 1024;
@@ -181,6 +215,7 @@ async function sendFile(buffer, type) {
 }
 async function eraseFile(fileId) {
   if (!fileId) return;
+  if(cloudRef(fileId)) { try { await cloudAction("destroy",{public_id:fileId,type:"authenticated",invalidate:"true"}); } catch(e) { console.warn("No se pudo eliminar video Cloudinary"); } return; }
   try { await fetchRemote(`/storage/buckets/${encodeURIComponent(BUCKET)}/files/${encodeURIComponent(fileId)}`, { method: "DELETE" }); }
   catch (e) { console.warn("No se pudo eliminar archivo", e.message); }
 }
@@ -315,7 +350,7 @@ async function getFile(res, req, row) {
   const ref = fileReference(row);
   if (!ref) abort(404, "Archivo no disponible");
   const path = `/storage/buckets/${encodeURIComponent(BUCKET)}/files/${encodeURIComponent(ref.id)}/download`;
-  const upstream = await fetchRemote(path, {
+  const upstream = cloudRef(ref.id) ? await fetch(cloudDelivery(ref.id), {headers:req.headers.range?{Range:req.headers.range}:{}}) : await fetchRemote(path, {
     headers: req.headers.range ? { Range: req.headers.range } : {},
   }, true);
   if (!upstream.ok) abort(502, "No se pudo cargar el archivo");
