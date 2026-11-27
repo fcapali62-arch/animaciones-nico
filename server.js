@@ -27,22 +27,31 @@ const TABLE_LIKES = ENV.APPWRITE_GUSTOS_TABLE_ID || "";
 const TABLE_CHAT = ENV.APPWRITE_MENSAJES_TABLE_ID || "";
 const BUCKET = ENV.APPWRITE_BUCKET_ID || "";
 const ADMIN_PASSWORD = ENV.ADMIN_PASSWORD || "";
-const CLOUD_NAME = ENV.CLOUDINARY_CLOUD_NAME || "";
-const CLOUD_KEY = ENV.CLOUDINARY_API_KEY || "";
-const CLOUD_SECRET = ENV.CLOUDINARY_API_SECRET || "";
+const CLOUD_NAME = (ENV.CLOUDINARY_CLOUD_NAME || "").trim();
+const CLOUD_KEY = (ENV.CLOUDINARY_API_KEY || "").trim();
+const CLOUD_SECRET = (ENV.CLOUDINARY_API_SECRET || "").trim();
+function cloudAuthHeader() {
+  return "Basic "+Buffer.from(CLOUD_KEY+":"+CLOUD_SECRET).toString("base64");
+}
+async function checkCloudConnection() {
+  if(!CLOUD_NAME||!CLOUD_KEY||!CLOUD_SECRET) { console.log("Cloudinary check: missing configuration");return; }
+  if(!/^\d+$/.test(CLOUD_KEY)||/^[.••*\s]+$/.test(CLOUD_SECRET)) {console.log("Cloudinary check: invalid credential format");return;}
+  try {
+    const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/ping",{headers:{Authorization:cloudAuthHeader()},signal:AbortSignal.timeout(15000)});
+    console.log("Cloudinary check: HTTP "+response.status);
+    await response.body?.cancel();
+  } catch(e) {console.log("Cloudinary check: network error");}
+}
 function cloudSignature(params) {
   return crypto.createHash("sha1").update(Object.keys(params).sort().map(k=>k+"="+params[k]).join("&")+CLOUD_SECRET).digest("hex");
 }
 function cloudRef(id) { return /^cloudv_[a-f0-9]{32}_(mp4|webm)$/.exec(id); }
 async function cloudAction(action, params, buffer, type) {
   if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) abort(503,"Falta configurar Cloudinary");
-  const signed = {...params,timestamp:Math.floor(Date.now()/1000)};
   const form = new FormData();
-  for(const [k,v] of Object.entries(signed)) form.append(k,String(v));
-  form.append("api_key",CLOUD_KEY);
-  form.append("signature",cloudSignature(signed));
+  for(const [k,v] of Object.entries(params)) form.append(k,String(v));
   if(buffer) form.append("file",new Blob([buffer],{type}),"nico."+ALLOWED.get(type));
-  const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/video/"+action,{method:"POST",body:form,signal:AbortSignal.timeout(30000)});
+  const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/video/"+action,{method:"POST",headers:{Authorization:cloudAuthHeader()},body:form,signal:AbortSignal.timeout(30000)});
   const data=await response.json();
   if(!response.ok) abort(502,"Cloudinary no pudo procesar el video. Revisa las credenciales y los límites del plan.");
   return data;
@@ -57,8 +66,7 @@ async function cloudUpload(buffer,type) {
 async function cloudUploadStream(req, type, size) {
   if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) abort(503,"Falta configurar Cloudinary");
   const id="cloudv_"+crypto.randomUUID().replaceAll("-","")+"_"+ALLOWED.get(type);
-  const params={public_id:id,type:"authenticated",overwrite:"false",timestamp:Math.floor(Date.now()/1000)};
-  const fields={...params,api_key:CLOUD_KEY,signature:cloudSignature(params)};
+  const fields={public_id:id,type:"authenticated",overwrite:"false"};
   const boundary="nico"+crypto.randomBytes(18).toString("hex");
   const prefix=Buffer.from(Object.entries(fields).map(([k,v])=>"--"+boundary+"\r\nContent-Disposition: form-data; name=\""+k+"\"\r\n\r\n"+v+"\r\n").join("")+"--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"nico."+ALLOWED.get(type)+"\"\r\nContent-Type: "+type+"\r\n\r\n");
   const suffix=Buffer.from("\r\n--"+boundary+"--\r\n");
@@ -75,7 +83,7 @@ async function cloudUploadStream(req, type, size) {
   }
   try {
     const response=await fetch("https://api.cloudinary.com/v1_1/"+encodeURIComponent(CLOUD_NAME)+"/video/upload",{
-      method:"POST",headers:{"Content-Type":"multipart/form-data; boundary="+boundary,"Content-Length":String(prefix.length+size+suffix.length)},
+      method:"POST",headers:{Authorization:cloudAuthHeader(),"Content-Type":"multipart/form-data; boundary="+boundary,"Content-Length":String(prefix.length+size+suffix.length)},
       body:body(),duplex:"half",signal:AbortSignal.timeout(300000)
     });
     const result=await response.json();
@@ -416,6 +424,7 @@ function requireReady() { if (!APP_READY) abort(503, "Configura las variables de
 function startupMessage() {
   console.log("Animaciones Nico V6, puerto", PORT);
   console.log("Appwrite:", APP_READY ? "variables completas" : "faltan variables");
+  void checkCloudConnection();
   console.log("Google OAuth: requiere habilitar el proveedor y dominio en Appwrite");
 }
 
