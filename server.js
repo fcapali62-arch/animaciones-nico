@@ -134,7 +134,7 @@ async function fetchRemote(path, options = {}, asBytes = false) {
     "X-Appwrite-Key": KEY,
     ...options.headers,
   };
-  const response = await fetch(ENDPOINT + path, { ...options, headers: h, signal: AbortSignal.timeout(25000) });
+  const response = await fetch(ENDPOINT + path, { ...options, headers: h, signal: AbortSignal.timeout(asBytes ? 300000 : 60000) });
   if (asBytes) return response;
   const raw = await response.text();
   let body;
@@ -366,7 +366,12 @@ async function getFile(res, req, row) {
     if (value) headers[to] = value;
   }
   res.writeHead(upstream.status === 206 ? 206 : 200, headers);
-  if (upstream.body) Readable.fromWeb(upstream.body).pipe(res);
+  if (upstream.body) {
+    const stream = Readable.fromWeb(upstream.body);
+    stream.on("error", () => { if (!res.destroyed) res.destroy(); });
+    res.on("close", () => stream.destroy());
+    stream.pipe(res);
+  }
   else res.end();
 }
 function requireReady() { if (!APP_READY) abort(503, "Configura las variables de Appwrite en Render"); }
