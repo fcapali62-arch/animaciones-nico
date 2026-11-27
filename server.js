@@ -10,7 +10,7 @@ const CLOUD = process.env.CLOUDINARY_CLOUD_NAME || "";
 const PRESET = process.env.CLOUDINARY_UPLOAD_PRESET || "";
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
-const MAX_LOCAL = 30 * 1024 * 1024;
+const MAX_LOCAL = 100 * 1024 * 1024;
 const DATA_FILE = "./videos.json";
 const VIDEO_DIR = "./videos";
 const sessions = new Map();
@@ -588,6 +588,7 @@ async function submitVideo() {
   }
 
   btn.disabled=true;
+  if(video.size>100*1024*1024) { msg.textContent="El video supera el máximo de 100 MB."; return; }
   msg.textContent="Preparando subida...";
 
   try {
@@ -603,6 +604,7 @@ async function submitVideo() {
         sources:["local"],
         multiple:false,
         maxFiles:1,
+        maxVideoFileSize:100*1024*1024,
         clientAllowedFormats:["mp4","webm","mov","m4v","ogg"]
       },async(error,result)=>{
         if(error) {
@@ -639,9 +641,9 @@ async function submitVideo() {
 
       widget.open();
     }else {
-      if(video.size>30*1024*1024) {
+      if(video.size>100*1024*1024) {
         throw Error(
-          "Para videos mayores de 30 MB primero hay que configurar Cloudinary en Render."
+          "El video supera el máximo de 100 MB."
         );
       }
 
@@ -832,7 +834,7 @@ const server = http.createServer(async(req,res)=>{
     if(req.method==="POST"&&path==="/api/local-request") {
       if(Number(req.headers["content-length"]||0)>MAX_LOCAL+100000) {
         return reply(res,413,{
-          error:"Máximo 30 MB para subida directa"
+          error:"Máximo 100 MB para subida directa"
         });
       }
 
@@ -863,7 +865,7 @@ const server = http.createServer(async(req,res)=>{
 
       if(!ext||!file.size||file.size>MAX_LOCAL) {
         return reply(res,400,{
-          error:"Usa MP4, WebM u OGG de hasta 30 MB"
+          error:"Usa MP4, WebM u OGG de hasta 100 MB"
         });
       }
 
